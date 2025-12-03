@@ -72,7 +72,7 @@ https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Auto_Assign.us
 ---
 
 ## 🔧 Installation Instructions
-1. Install **Tampermonkey** extension (Chrome/Edge/Firefox).  
+1. Install **Tampermonkey** extension in Chrome.  
 2. Open new Tab in browser and paste any script link above.  
 3. Tampermonkey will show **Install** → click it.  
 4. Script will auto-update from GitHub (no copy/paste needed).
