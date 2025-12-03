@@ -82,7 +82,6 @@ https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Auto_Assign.us
 ## 🧩 Notes
 - All scripts run only on specific CreditCube LMS pages.  
 - Updates arrive automatically when version increases. 
--
 
 ---
 
