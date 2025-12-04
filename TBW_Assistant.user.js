@@ -682,10 +682,10 @@ function showStickyAlert(text) {
       return 'CANNOT_VERIFY_ONLINE_BANKING';
     }
     if (
-      lower.includes('cust has an active loan with us') ||
+      lower.includes('has an active loan with us') ||
       lower.includes('active loan with us')
     ) {
-      return 'ACTIVE_LOAN_WITH_US';
+      return 'HAS_ACTIVE_LOAN';
     }
     if (lower.includes('unacceptable bank')) {
       return 'UNACCEPTABLE_BANK';
@@ -721,7 +721,7 @@ function showStickyAlert(text) {
         LOAN_TOO_EXPENSIVE: /loan\s+too\s+expensive/i,
         CUSTOMER_DID_NOT_APPLY: /(customer|cust)\s+did\s+not\s+apply/i,
         CANNOT_VERIFY_ONLINE_BANKING: /cannot\s+verify\s+online\s+banking/i,
-        ACTIVE_LOAN_WITH_US:
+        HAS_ACTIVE_LOAN:
           /(cust\s+has\s+an\s+active\s+loan\s+with\s+us|active\s+loan\s+with\s+us)/i,
         UNACCEPTABLE_BANK: /unacceptable\s+bank/i
       };
