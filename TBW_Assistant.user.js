@@ -2,7 +2,7 @@
 // @name         TBW Assistant
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Show TBW denial reason, auto-deny some reasons, quick Review to CRP and quick Deny popup, with Copy reason button and auto-denied notice.
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/TBW_Assistant.user.js
