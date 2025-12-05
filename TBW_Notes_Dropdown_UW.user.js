@@ -2,7 +2,7 @@
 // @name         TBW Notes Dropdown_UW
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1
+// @version      1.2
 // @description  Adds a TBW notes dropdown that auto-fills the Notes field on CustomerNotes page
 // @match        http*://*/plm.net/customers/CustomerNotes.aspx*
 // @run-at       document-end
@@ -45,23 +45,23 @@
     'TBW - Cannot verify online banking',
     'TBW - Unacceptable bank',
     'TBW - Multiple Open Loan',
-    'TBW - Minimum Income Requirement Not Met',
     'TBW - Recently received a loan',
     'TBW - Multiple Defaults',
-    'TBW - Negative account balance',
-    'TBW - Irregular online banking behavior',
-    'TBW - Low banking activity',
-    'TBW - Unemployed',
-    'TBW - No checking account',
+    'TBW - Low EOD balance',
     'TBW - No Direct deposits',
-    'TBW - New job',
+    'TBW - Negative account balance',
+    'TBW - Unacceptable payment frequency',
+    'TBW - Irregular online banking behavior',
+    'TBW - Minimum Income Requirement Not Met',
+    'TBW - Low banking activity',
+    'TBW - No checking account',
     'TBW - New bank account',
+    'TBW - New job',
     'TBW - Cust in collection',
     'TBW - Unacceptable employer',
-    'TBW - Fraud',
-    'TBW - Unacceptable pay frequency',
     'TBW - Cust in Military',
-    'TBW - Low EOD balance',
+    'TBW - Unemployed',
+    'TBW - Fraud',
     'TBW - Other: '
 
         ];
