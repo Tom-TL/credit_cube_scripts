@@ -2,7 +2,7 @@
 // @name         TBW Notes Dropdown_UW
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      0.1
+// @version      1.1
 // @description  Adds a TBW notes dropdown that auto-fills the Notes field on CustomerNotes page
 // @match        http*://*/plm.net/customers/CustomerNotes.aspx*
 // @run-at       document-end
