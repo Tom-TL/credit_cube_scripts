@@ -2,7 +2,7 @@
 // @name         Compact Denial List
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1
+// @version      1.2
 // @description  Compact denial reasons list with custom order, pill toggles, saved ON/OFF state, smaller boxes, faster access.
 // @match        http*://*/plm.net/*EditLoanDenialReasons.aspx*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Compact_Denial_List.user.js
@@ -180,12 +180,12 @@
 
         mainTextareas.forEach(t => {
             t.rows = 1;
-            t.style.height = '22px';
+            t.style.height = '18px';
         });
 
         extraTextareas.forEach(t => {
             t.rows = 1;
-            t.style.height = '30px';
+            t.style.height = '26px';
         });
 
         fixPopupHeight();
