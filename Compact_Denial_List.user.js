@@ -2,7 +2,7 @@
 // @name         Compact Denial List
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Compact denial reasons list with custom order, pill toggles, saved ON/OFF state, smaller boxes, faster access.
 // @match        http*://*/plm.net/*EditLoanDenialReasons.aspx*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Compact_Denial_List.user.js
@@ -33,8 +33,9 @@
         "No Checking account",
         "New Bank Account",
         "Minimum Income Requirement Not Met",
+        "Cust in Collections",
+        "New Job",
         "Unemployed",
-        "Fraud",
         "Other"
     ];
 
