@@ -2,7 +2,7 @@
 // @name         Session Keeper
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Prevents auto-logout in Infinity LMS by sending keep-alive pings and simulating user activity.
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Session_Keeper.user.js
