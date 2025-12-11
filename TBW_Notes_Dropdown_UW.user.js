@@ -2,7 +2,7 @@
 // @name         TBW Notes Dropdown_UW
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.3
+// @version      1.4
 // @description  Adds a TBW notes dropdown that auto-fills the Notes field on CustomerNotes page
 // @match        http*://*/plm.net/customers/CustomerNotes.aspx*
 // @run-at       document-end
@@ -17,7 +17,7 @@
 
 
 (function () {
-    const CURRENT_VERSION = "1.3"; // 🔁 1) МЕНЯЙ ЗДЕСЬ ПРИ КАЖДОМ ОБНОВЛЕНИИ
+    const CURRENT_VERSION = "1.4"; // 🔁 1) МЕНЯЙ ЗДЕСЬ ПРИ КАЖДОМ ОБНОВЛЕНИИ
     const STORAGE_KEY = "tbwNotesDropdownW_lastSeenVersion";
 
     const lastSeenVersion = localStorage.getItem(STORAGE_KEY);
