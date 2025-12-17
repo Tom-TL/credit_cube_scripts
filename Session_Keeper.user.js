@@ -2,7 +2,7 @@
 // @name         Session Keeper
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2
+// @version      1.3
 // @description  Prevents auto-logout in Infinity LMS by sending keep-alive pings and simulating user activity.
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Session_Keeper.user.js
@@ -21,7 +21,7 @@
   // DEBUG_UI:
   // false → кнопки вообще нет, скрипт тихо работает в фоне (stealth mode)
   // true  → показывается красивая кнопка "Session: ON/OFF" снизу слева
-  const DEBUG_UI = false;  // ← если хочешь спрятать кнопку — поставь false
+  const DEBUG_UI = true;  // ← если хочешь спрятать кнопку — поставь false
 
   // LABEL:
   // Текст в кнопке. Можно заменить на "Active", "Keep", "Stay" и т.п.
