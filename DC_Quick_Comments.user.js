@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC Quick Comments
 // @namespace    https://github.com/TOM-TL/credit_cube_scripts
-// @version      1.0.0
+// @version      1.0.1
 // @description  Adds compact action buttons under Comments to quickly add Green DC-related comments (PIF / Regular payment) without opening the Comments popup.
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
