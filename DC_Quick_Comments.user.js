@@ -162,8 +162,9 @@
       'Regular payment with DC'
     );
 
-    parent.appendChild(btnPif);
     parent.appendChild(btnReg);
+    parent.appendChild(btnPif);
+  
   }
 
   init();
