@@ -2,9 +2,12 @@
 // @name         Bulk Open Tabs
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Pending Loans report: open N (or 5/10/15/20/all) customers from visible list in new tabs
-// @match        *://apply.creditcube.com/plm.net/reports/LoansReport.aspx?reportpreset=pending*
+// @match        *://apply.creditcube.com/plm.net/reports/LoansReport.aspx?reportpreset=pending* 
+// @match      https://apply.creditcube.com/plm.net/reports/LoansReport.aspx?reportpreset=approvedoftoday
+// @match        *://apply.creditcube.com/plm.net/reports/LoansReport.aspx?reportpreset=deniedoftoday
+// @match         https://apply.creditcube.com/plm.net/reports/CustomersReport.aspx?reportpreset=search
 // @match         https://apply.creditcube.com/plm.net/reports/LoansReport.aspx?reportpreset=search
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Bulk_Open_Tabs.user.js
 // @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Bulk_Open_Tabs.user.js
