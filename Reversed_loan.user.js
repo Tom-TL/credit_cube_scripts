@@ -2,11 +2,11 @@
 // @name         Reversed loan
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Shows Red Reversed Loan button near Max Exposure (only if Status contains Reversed) and sends Email+Text
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
-// @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Reversed_loan_user.js
-// @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Reversed_loan_user.js
+// @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Reversed_loan.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Reversed_loan.user.js
 // @grant        none
 // ==/UserScript==
 
