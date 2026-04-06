@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         TBW TL Helper (Remove TBW + Send Esig)
+// @name         TBW TL Helper
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
-// @description  Assign TL, Remove TBW , send E-Sign (Email + Text) with toasts
+// @version      1.1
+// @description  Assign TL, Remove TBW , send new E-Sign (Email + Text) with toasts
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/TBW_TL_Helper.user.js
