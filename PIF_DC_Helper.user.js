@@ -2,9 +2,10 @@
 // @name         PIF DC Helper
 // @author       Tom Harris
 // @namespace    https://github.com/TOM-TL/credit_cube_scripts
-// @version      1.1
+// @version      1.2
 // @description  One-click actions for Active loans: Update DC(Email + Text), create PIF Payment Plan, and send PIF docs (Email + Text).
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
+// @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/PIF_DC_Helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/PIF_DC_Helper.user.js
 // @grant        none
