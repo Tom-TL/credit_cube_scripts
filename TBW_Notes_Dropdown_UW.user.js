@@ -2,7 +2,7 @@
 // @name         TBW Notes Dropdown_UW
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.6
+// @version      1.7
 // @description  Adds a compact TBW quick search with dropdown below the field that auto-fills the Notes field on CustomerNotes page
 // @match        http*://*/plm.net/customers/*
 // @run-at       document-end
@@ -211,7 +211,7 @@
             }
 
 
-   #${LIST_ID}{
+  #${LIST_ID}{
     position: absolute;
     top: calc(100% + 10px);
     left: 0;
@@ -221,15 +221,15 @@
     max-height: 260px;
     overflow-y: auto;
     overflow-x: hidden;
-    background: #0d1518;
-    color: #ffffff;
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    box-shadow: 0 10px 28px rgba(0,0,0,.30);
-    padding: 6px 0 5px 0;
+    background: #ffffff; /* 👈 БЕЛЫЙ */
+    color: #000000;      /* 👈 ТЕКСТ ЧЕРНЫЙ */
+    border: 1px solid #c8c8c8;
+    border-radius: 4px;
+    box-shadow: 0 4px 10px rgba(0,0,0,.15);
+    padding: 4px 0;
     z-index: 99999;
     display: none;
-    font-family: Segoe UI, Arial, sans-serif;
+    font-family: Arial, sans-serif;
     white-space: nowrap;
 }
 
@@ -240,23 +240,20 @@
                 display: block;
             }
 #${LIST_ID} .tbw-item{
-    padding: 8px 14px;
+    padding: 6px 10px;
     font-size: 11px;
-    line-height: 1.35;
     cursor: pointer;
-    white-space: nowrap;
-    color: #ffffff;
+    color: #000;
 }
+
 #${LIST_ID} .tbw-item:hover{
-    background: transparent;
-    color: #ffffff;
+    background: #e6f0ff; /* лёгкий голубой как в Windows */
 }
 
 #${LIST_ID} .tbw-item.${HIGHLIGHT_CLASS}{
-    background: #1a5fd1;
-    color: #ffffff;
+    background: #cce0ff;
+    color: #000;
 }
-
             #${LIST_ID} .tbw-empty{
                 padding: 8px 14px;
                 font-size: 11px;
