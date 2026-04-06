@@ -2,7 +2,7 @@
 // @name         PIF DC Helper
 // @author       Tom Harris
 // @namespace    https://github.com/TOM-TL/credit_cube_scripts
-// @version      1.2
+// @version      1.4
 // @description  One-click actions for Active loans: Update DC(Email + Text), create PIF Payment Plan, and send PIF docs (Email + Text).
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
@@ -158,7 +158,7 @@
   }
 
   // =====================================================================
-  // POPUP CLOSE (TAKEN FROM v6.3 ONLY) — but runs ONLY during sending
+  // POPUP CLOSE
   // =====================================================================
   function closeLMSModals() {
     try {
@@ -179,6 +179,16 @@
       await sleep(250);
     }
     closeLMSModals();
+  }
+
+  function pageShowsContactDisabled() {
+    return (document.body.innerText || '').toLowerCase().includes('contact method disabled');
+  }
+
+  function isOptionDisabledLike(opt) {
+    if (!opt) return false;
+    const t = (opt.textContent || '').toLowerCase();
+    return !!opt.disabled || t.includes('(disabled)') || t.includes(' disabled');
   }
 
   // ===== LETTER CONTROLS (v13.7) =====
@@ -234,6 +244,10 @@
     const key = `${LOAN}:${actionType}:${String(templateContains).toLowerCase()}`;
     if (!allowSend(key)) return;
 
+    if (pageShowsContactDisabled()) {
+      throw new Error('Contact method disabled');
+    }
+
     ctrls.actionSel.value = actionType;
     ctrls.actionSel.dispatchEvent(new Event('change', { bubbles: true }));
     await sleep(200);
@@ -246,6 +260,10 @@
     );
     if (!opt) throw new Error('Template not found: ' + templateContains);
 
+    if (isOptionDisabledLike(opt)) {
+      throw new Error('Contact method disabled');
+    }
+
     templateSel.value = opt.value;
     templateSel.dispatchEvent(new Event('change', { bubbles: true }));
     await sleep(200);
@@ -253,12 +271,42 @@
     ctrls.sendBtn.click();
     await sleep(200);
     await autoCloseDuringSend(6000);
+
+    if (pageShowsContactDisabled()) {
+      closeLMSModals();
+      throw new Error('Contact method disabled');
+    }
   }
 
-  async function sendBoth(textContains, emailContains) {
-    await sendLetter('textmessage', textContains);
+  async function sendBothWithSeparateToasts(textContains, emailContains) {
+    // EMAIL
+    try {
+      await sendLetter('send', emailContains);
+      toast('Email sent');
+    } catch (e) {
+      const msg = (e && e.message ? e.message : '').toLowerCase();
+      if (msg.includes('disabled') || msg.includes('cannot') || msg.includes('not allowed')) {
+        toast('Email disabled', 'err');
+      } else {
+        toast('Email send failed', 'err');
+      }
+    }
+
     await sleep(350);
-    await sendLetter('send', emailContains);
+
+    // TEXT
+    try {
+      await sendLetter('textmessage', textContains);
+      toast('Text sent');
+    } catch (e) {
+      const msg = (e && e.message ? e.message : '').toLowerCase();
+      if (msg.includes('disabled') || msg.includes('cannot') || msg.includes('not allowed') || msg.includes('failed')) {
+        toast('Text disabled', 'err');
+      } else {
+        toast('Text send failed', 'err');
+      }
+    }
+
     await sleep(200);
   }
 
@@ -284,15 +332,14 @@
     return `${mm}/${dd}/${d.getFullYear()}`;
   }
 
-  // ===== ACTIONS (v13.7) =====
+  // ===== ACTIONS =====
   async function handleUpdateDC() {
     if (operationRunning) return;
     lockButtons(true);
     try {
-      await sendBoth('Debit Card Update Link', 'Debit Card Update Link');
+      await sendBothWithSeparateToasts('Debit Card Update Link', 'Debit Card Update Link');
       setDone(BTN_IDS.updatedc);
       makeOrange(document.getElementById(BTN_IDS.updatedc));
-      toast('Update DC email + text sent ✓');
     } catch (e) {
       toast('Update DC error: ' + (e?.message || e), 'err');
     } finally {
@@ -376,7 +423,7 @@
 
           setDone(BTN_IDS.pifpp);
           makeOrange(document.getElementById(BTN_IDS.pifpp));
-          toast('PIF Payment Plan created ✓');
+          toast('Payment Plan created ✓');
         } catch (e) {
           try { iframe.remove(); } catch {}
           toast('PIF error: ' + (e?.message || e), 'err');
@@ -392,87 +439,93 @@
     }
   }
 
-  async function handleSendPIFDocs() {
-    if (operationRunning) return;
-    lockButtons(true);
+ async function handleSendPIFDocs() {
+  if (operationRunning) return;
+  lockButtons(true);
 
-    try {
-      const link =
-        document.querySelector('a[href*="additionalagreements("]') ||
-        Array.from(document.querySelectorAll('a')).find((a) =>
-          /additionalagreements\(\d+\)/i.test(a.getAttribute('href') || '')
-        );
+  try {
+    const link =
+      document.querySelector('a[href*="additionalagreements("]') ||
+      Array.from(document.querySelectorAll('a')).find((a) =>
+        /additionalagreements\(\d+\)/i.test(a.getAttribute('href') || '')
+      );
 
-      if (!link) throw new Error('Additional Agreements link not found');
+    if (!link) throw new Error('Additional Agreements link not found');
 
-      const mm = (link.getAttribute('href') || '').match(/additionalagreements\((\d+)\)/i);
-      if (!mm) throw new Error('Cannot parse loanid');
-      const loanid = mm[1];
+    const mm = (link.getAttribute('href') || '').match(/additionalagreements\((\d+)\)/i);
+    if (!mm) throw new Error('Cannot parse loanid');
+    const loanid = mm[1];
 
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = `popups/AdditionalAgreements.aspx?loanid=${loanid}`;
-      document.body.appendChild(iframe);
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = `popups/AdditionalAgreements.aspx?loanid=${loanid}`;
+    document.body.appendChild(iframe);
 
-      iframe.onload = async () => {
-        try {
-          const doc = iframe.contentDocument;
+    let pifDocsFlowStarted = false;
 
-          for (let i = 0; i < 40; i++) {
-            const sel = doc.querySelector('select');
-            if (sel && sel.options && sel.options.length > 1) break;
-            await sleep(200);
-          }
+    iframe.onload = async () => {
+      if (pifDocsFlowStarted) return;
+      pifDocsFlowStarted = true;
 
+      try {
+        const doc = iframe.contentDocument;
+
+        for (let i = 0; i < 40; i++) {
           const sel = doc.querySelector('select');
-          if (!sel) throw new Error('Agreement dropdown not found');
-
-          const opt = Array.from(sel.options || []).find((o) =>
-            (o.textContent || '').toLowerCase().includes('repayment plan addendum')
-          );
-          if (!opt) throw new Error('Repayment Plan Addendum not found');
-
-          sel.value = opt.value;
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          await sleep(250);
-
-          const createBtn =
-            doc.querySelector('input[value="Create"]') || doc.querySelector('button');
-          if (!createBtn) throw new Error('Create button not found');
-          createBtn.click();
-
-          await sleep(900);
-          try { iframe.remove(); } catch {}
-
-          await sendBoth('Payment Plan Agreement', 'Payment Plan Agreement');
-
-          setDone(BTN_IDS.docs);
-          makeOrange(document.getElementById(BTN_IDS.docs));
-          toast('PIF documents email + text sent ✓');
-
-          await autoCloseDuringSend(2000);
-        } catch (e) {
-          try { iframe.remove(); } catch {}
-          toast('PIF Docs error: ' + (e?.message || e), 'err');
-          await autoCloseDuringSend(2000);
-          lockButtons(false);
-          applySavedState();
-        } finally {
-          lockButtons(false);
-          applySavedState();
+          if (sel && sel.options && sel.options.length > 1) break;
+          await sleep(200);
         }
-      };
-    } catch (e) {
-      toast('PIF Docs error: ' + (e?.message || e), 'err');
-      await autoCloseDuringSend(1500);
-      lockButtons(false);
-      applySavedState();
-    }
-  }
 
-  // ===================== ACTIVE GATE (ONLY ADDITION) =====================
+        const sel = doc.querySelector('select');
+        if (!sel) throw new Error('Agreement dropdown not found');
+
+        const opt = Array.from(sel.options || []).find((o) =>
+          (o.textContent || '').toLowerCase().includes('repayment plan addendum')
+        );
+        if (!opt) throw new Error('Repayment Plan Addendum not found');
+
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(250);
+
+        const createBtn =
+          doc.querySelector('input[value="Create"]') || doc.querySelector('button');
+        if (!createBtn) throw new Error('Create button not found');
+        createBtn.click();
+
+        await sleep(900);
+        try { iframe.remove(); } catch {}
+
+        await sendBothWithSeparateToasts('Payment Plan Agreement', 'Payment Plan Agreement');
+
+        setDone(BTN_IDS.docs);
+        makeOrange(document.getElementById(BTN_IDS.docs));
+
+        await autoCloseDuringSend(2000);
+      } catch (e) {
+        try { iframe.remove(); } catch {}
+        toast('PIF Docs error: ' + (e?.message || e), 'err');
+        await autoCloseDuringSend(2000);
+      } finally {
+        lockButtons(false);
+        applySavedState();
+      }
+    };
+  } catch (e) {
+    toast('PIF Docs error: ' + (e?.message || e), 'err');
+    await autoCloseDuringSend(1500);
+    lockButtons(false);
+    applySavedState();
+  }
+}
+
+
+
+
+
+
+  // ===================== ACTIVE GATE =====================
   function isLoanActive() {
-    // Finds the table row: "Status :" -> value cell contains "Active"
     const tds = Array.from(document.querySelectorAll('td'));
     for (const td of tds) {
       const label = (td.textContent || '').replace(/\s+/g, ' ').trim();
@@ -481,7 +534,6 @@
         if (val) return /\bactive\b/i.test(val);
       }
     }
-    // Fallback: header "LOAN# ... / ACTIVE,"
     const txt = document.body?.innerText || '';
     const m = txt.match(/LOAN#\s*\d+\s*\/\s*([A-Z]+)/i);
     return m ? /ACTIVE/i.test(m[1]) : false;
@@ -491,25 +543,23 @@
     const wrap = document.getElementById(BTN_IDS.wrap);
     if (wrap) wrap.remove();
   }
-  // ======================================================================
 
-  // ===== UI (v13.7 placement/design) + ResetX =====
+  // ===== UI =====
   function buildBtn(label, id) {
     const b = document.createElement('button');
     b.id = id;
     b.type = 'button';
     b.textContent = label;
-   b.style.cssText =
-  'padding:4px 9px;' +
-  'background:#2f3640;' +
-  'color:#fff;' +
-  'border:1px solid #111;' +
-  'border-radius:6px;' +
-  'cursor:pointer;' +
-  'font-size:11px;' +
-  'line-height:1.1;' +
-  'white-space:nowrap;';
-
+    b.style.cssText =
+      'padding:4px 9px;' +
+      'background:#2f3640;' +
+      'color:#fff;' +
+      'border:1px solid #111;' +
+      'border-radius:6px;' +
+      'cursor:pointer;' +
+      'font-size:11px;' +
+      'line-height:1.1;' +
+      'white-space:nowrap;';
     return b;
   }
 
@@ -562,7 +612,6 @@
     const b3 = buildBtn('Send PIF Docs', BTN_IDS.docs);
     const x3 = buildResetX(BTN_IDS.docs);
 
-    // STRICT handlers only on button area (capture + hard stop)
     b1.addEventListener('click', async (e) => { hardStop(e); await handleUpdateDC(); }, true);
     b2.addEventListener('click', async (e) => { hardStop(e); await handleCreatePIFPP(); }, true);
     b3.addEventListener('click', async (e) => { hardStop(e); await handleSendPIFDocs(); }, true);
@@ -576,7 +625,7 @@
     applySavedState();
   }
 
-  // ===== SELF-HEAL (v13.7) =====
+  // ===== SELF-HEAL =====
   function boot() {
     injectUI();
     setInterval(injectUI, 700);
