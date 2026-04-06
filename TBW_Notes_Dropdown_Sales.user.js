@@ -2,7 +2,7 @@
 // @name         TBW Notes Dropdown_Sales
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2
+// @version      1.3
 // @description  Adds a compact TBW quick search with dropdown below the field that auto-fills the Notes field on CustomerNotes page
 // @match        http*://*/plm.net/customers/*
 // @run-at       document-end
@@ -200,50 +200,46 @@
           }
 
           #${LIST_ID}{
-              position: absolute;
-              top: calc(100% + 10px);
-              left: 0;
-              width: max-content;
-              min-width: 290px;
-              max-width: 430px;
-              max-height: 260px;
-              overflow-y: auto;
-              overflow-x: hidden;
-              background: #0d1518;
-              color: #ffffff;
-              border: 1px solid rgba(255,255,255,0.08);
-              border-radius: 8px;
-              box-shadow: 0 10px 28px rgba(0,0,0,.30);
-              padding: 6px 0 5px 0;
-              z-index: 99999;
-              display: none;
-              font-family: Segoe UI, Arial, sans-serif;
-              white-space: nowrap;
-          }
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    width: max-content;
+    min-width: 320px;
+    max-width: none; /* 👈 важно */
+    max-height: 260px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #ffffff; /* 👈 белый */
+    color: #000000;
+    border: 1px solid #c8c8c8;
+    border-radius: 4px;
+    box-shadow: 0 4px 10px rgba(0,0,0,.15);
+    padding: 4px 0;
+    z-index: 99999;
+    display: none;
+    font-family: Arial, sans-serif;
+    white-space: nowrap;
+}
 
           #${LIST_ID}.show{
               display: block;
           }
 
-          #${LIST_ID} .tbw-item{
-              padding: 8px 14px;
-              font-size: 11px;
-              line-height: 1.35;
-              cursor: pointer;
-              white-space: nowrap;
-              color: #ffffff;
-          }
+         #${LIST_ID} .tbw-item{
+    padding: 6px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    color: #000;
+}
 
-          #${LIST_ID} .tbw-item:hover{
-              background: transparent;
-              color: #ffffff;
-          }
+#${LIST_ID} .tbw-item:hover{
+    background: #e6f0ff;
+}
 
-          #${LIST_ID} .tbw-item.${HIGHLIGHT_CLASS}{
-              background: #1a5fd1;
-              color: #ffffff;
-          }
-
+#${LIST_ID} .tbw-item.${HIGHLIGHT_CLASS}{
+    background: #cce0ff;
+    color: #000;
+}
           #${LIST_ID} .tbw-empty{
               padding: 8px 14px;
               font-size: 11px;
