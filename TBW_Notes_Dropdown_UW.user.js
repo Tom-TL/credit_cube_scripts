@@ -2,8 +2,8 @@
 // @name         TBW Notes Dropdown_UW
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.5
-// @description  Adds a TBW notes dropdown that auto-fills the Notes field on CustomerNotes page
+// @version      1.6
+// @description  Adds a compact TBW quick search with dropdown below the field that auto-fills the Notes field on CustomerNotes page
 // @match        http*://*/plm.net/customers/*
 // @run-at       document-end
 // @grant        none
@@ -11,13 +11,8 @@
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/TBW_Notes_Dropdown_UW.user.js
 // ==/UserScript==
 
-
-
-
-
-
 (function () {
-    const CURRENT_VERSION = "1.5"; // 🔁 1) МЕНЯЙ ЗДЕСЬ ПРИ КАЖДОМ ОБНОВЛЕНИИ
+    const CURRENT_VERSION = "1.7.2";
     const STORAGE_KEY = "tbwNotesDropdownW_lastSeenVersion";
 
     const lastSeenVersion = localStorage.getItem(STORAGE_KEY);
@@ -25,27 +20,15 @@
 
     const titleText = `⚙️ TBW Notes Dropdown for UW — updated to version ${CURRENT_VERSION}`;
 
-    // 🔧 2) МЕНЯЙ ЭТОТ МАССИВ ПОД КАЖДЫЙ РЕЛИЗ
     const updateLines = [
-        "New statuses added:",
-        "• TBW – Defaulted with us on the last payment",
-        "• TBW – Bank account is not unique",
-        "• TBW – Stop payment",
-        "• TBW – Multiple inactive loans",
-        "• TBW – Business account",
-        "• TBW - No last DD",
-        "• TBW – Last DD is low",
-        "• TBW – Last EOD is low",
-        "• TBW – Inconsistent income",
-        "• TBW – Withdraws funds after DDs",
-        "• TBW – Transfers funds to another account",
-        "• TBW – Cool off by collections",
-        "• TBW – Not approved by collections",
-        "• TBW – DO NOT LOAN",
+        "UI update:",
+        "• TBW quick search dropdown now opens below the field",
+        "• Search box height is closer to Standard Notes",
+        "• More compact and cleaner layout in Notes window",
+        "• Selecting a reason still fills Notes instantly"
     ];
 
     function showUpdateModal() {
-        // Полупрозрачный фон
         const overlay = document.createElement("div");
         overlay.style.position = "fixed";
         overlay.style.top = "0";
@@ -58,7 +41,6 @@
         overlay.style.alignItems = "center";
         overlay.style.justifyContent = "center";
 
-        // Центральное окно
         const modal = document.createElement("div");
         modal.style.background = "#222";
         modal.style.color = "#fff";
@@ -67,22 +49,19 @@
         modal.style.boxShadow = "0 6px 18px rgba(0,0,0,0.6)";
         modal.style.fontFamily = "Segoe UI, Tahoma, sans-serif";
         modal.style.fontSize = "13px";
-        modal.style.maxWidth = "520px";  // ширина ограничена, но высота авто
+        modal.style.maxWidth = "520px";
         modal.style.minWidth = "320px";
         modal.style.whiteSpace = "pre-line";
 
-        // Заголовок
         const titleEl = document.createElement("div");
         titleEl.textContent = titleText;
         titleEl.style.fontWeight = "600";
         titleEl.style.marginBottom = "10px";
 
-        // Текст изменений
         const bodyEl = document.createElement("div");
         bodyEl.textContent = "\n" + updateLines.join("\n");
         bodyEl.style.marginBottom = "16px";
 
-        // Кнопка OK
         const btn = document.createElement("button");
         btn.textContent = "OK";
         btn.style.padding = "6px 18px";
@@ -94,23 +73,16 @@
         btn.style.fontSize = "12px";
         btn.onmouseenter = () => { btn.style.background = "#00bcd4"; };
         btn.onmouseleave = () => { btn.style.background = "#111"; };
-        btn.onclick = () => {
-            if (overlay && overlay.parentNode) {
-                overlay.parentNode.removeChild(overlay);
-            }
-        };
+        btn.onclick = () => overlay.remove();
 
-      modal.appendChild(titleEl);
-modal.appendChild(bodyEl);
+        const btnWrapper = document.createElement("div");
+        btnWrapper.style.textAlign = "center";
+        btnWrapper.appendChild(btn);
 
-// Центрируем кнопку
-const btnWrapper = document.createElement("div");
-btnWrapper.style.textAlign = "center";
-btnWrapper.appendChild(btn);
-
-modal.appendChild(btnWrapper);
-overlay.appendChild(modal);
-
+        modal.appendChild(titleEl);
+        modal.appendChild(bodyEl);
+        modal.appendChild(btnWrapper);
+        overlay.appendChild(modal);
         document.body.appendChild(overlay);
     }
 
@@ -120,107 +92,410 @@ overlay.appendChild(modal);
         showUpdateModal();
     }
 
-    // Версию помечаем как уже показанную
     localStorage.setItem(STORAGE_KEY, CURRENT_VERSION);
 })();
 
-
-
 ///////////////////////////////////////////////////////////
-
 
 (function () {
     'use strict';
 
-    function initTBWDropdown() {
+    const TBW_OPTIONS_UW = [
+        'TBW - Cust has an active loan with us',
+        'TBW - Cannot verify online banking',
+        'TBW - Unacceptable bank',
+        'TBW - Multiple Open Loan',
+        'TBW - Multiple inactive loans',
+        'TBW - Recently received a loan',
+        'TBW - Multiple Defaults',
+        'TBW - Stop payment',
+        'TBW - Low EOD balances',
+        'TBW - Last EOD is low',
+        'TBW - No Direct deposits',
+        'TBW - No last DD',
+        'TBW - Last DD is low',
+        'TBW - Negative account balance',
+        'TBW - Bank account is not unique',
+        'TBW - Business account',
+        'TBW - Minimum Income Requirement Not Met',
+        'TBW - Unacceptable payment frequency',
+        'TBW - Inconsistent income',
+        'TBW - Irregular online banking behavior',
+        'TBW - Withdraws funds after DDs',
+        'TBW - Transfers funds to another account',
+        'TBW - Low banking activity',
+        'TBW - No checking account',
+        'TBW - New bank account',
+        'TBW - New job',
+        'TBW - Cust in collection',
+        'TBW - Defaulted with us on the last payment',
+        'TBW - Cool off by collections',
+        'TBW - Not approved by collections',
+        'TBW - DO NOT LOAN',
+        'TBW - Cust in Military',
+        'TBW - Unemployed',
+        'TBW - Fraud',
+        'TBW - Other: '
+    ];
+
+    const HOST_ID = 'tbw-quick-host';
+    const INPUT_ID = 'tbwQuickSearch';
+    const LIST_ID = 'tbwQuickList';
+    const STYLE_ID = 'tbwQuickStyles';
+    const HIGHLIGHT_CLASS = 'tbw-active';
+
+    function norm(s) {
+        return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    function fillNotes(notesTextarea, value) {
+        if (!notesTextarea || !value) return;
+
+        notesTextarea.value = value;
+        notesTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        notesTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+        notesTextarea.focus();
+
+        if (value === 'TBW - Other: ') {
+            try {
+                notesTextarea.setSelectionRange(value.length, value.length);
+            } catch (e) {}
+        }
+    }
+
+    function injectStyles() {
+        if (document.getElementById(STYLE_ID)) return;
+
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = `
+          #${HOST_ID}{
+    position: relative;
+    display: inline-block;
+    margin-left: 8px;
+    vertical-align: top;
+
+}
+            #${INPUT_ID}{
+                width: 27ex;
+                height: 24px;
+                padding: 2px 24px 2px 8px;
+                box-sizing: border-box;
+                border: 1px solid #b7b7b7;
+                background: #fff;
+                color: #444;
+                font-size: 11px;
+                font-family: Arial, sans-serif;
+                line-height: 20px;
+            }
+
+            #${INPUT_ID}::placeholder{
+                color: #222;
+                opacity: 1;
+            }
+
+            #${INPUT_ID}:focus{
+                outline: none;
+                border-color: #8f8f8f;
+            }
+
+            #${HOST_ID} .tbw-arrow{
+                position: absolute;
+                right: 9px;
+                top: 50%;
+                transform: translateY(-50%);
+                pointer-events: none;
+                color: #000;
+                font-size: 10px;
+                line-height: 1;
+            }
+
+
+   #${LIST_ID}{
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    width: max-content;
+    min-width: 290px;
+    max-width: 430px;
+    max-height: 260px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #0d1518;
+    color: #ffffff;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.30);
+    padding: 6px 0 5px 0;
+    z-index: 99999;
+    display: none;
+    font-family: Segoe UI, Arial, sans-serif;
+    white-space: nowrap;
+}
+
+
+
+
+            #${LIST_ID}.show{
+                display: block;
+            }
+#${LIST_ID} .tbw-item{
+    padding: 8px 14px;
+    font-size: 11px;
+    line-height: 1.35;
+    cursor: pointer;
+    white-space: nowrap;
+    color: #ffffff;
+}
+#${LIST_ID} .tbw-item:hover{
+    background: transparent;
+    color: #ffffff;
+}
+
+#${LIST_ID} .tbw-item.${HIGHLIGHT_CLASS}{
+    background: #1a5fd1;
+    color: #ffffff;
+}
+
+            #${LIST_ID} .tbw-empty{
+                padding: 8px 14px;
+                font-size: 11px;
+                color: #9fb2b8;
+            }
+
+            #${LIST_ID}::-webkit-scrollbar{
+                width: 8px;
+            }
+
+            #${LIST_ID}::-webkit-scrollbar-thumb{
+                background: rgba(255,255,255,0.18);
+                border-radius: 8px;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function buildUI(standardSelect, notesTextarea) {
+        if (document.getElementById(HOST_ID)) return;
+
+        const host = document.createElement('div');
+        host.id = HOST_ID;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = INPUT_ID;
+        input.placeholder = '-- TBW Notes --';
+        input.addEventListener('focus', () => {
+    input.placeholder = '';
+});
+
+input.addEventListener('blur', () => {
+    if (!input.value.trim()) {
+        input.placeholder = '-- TBW Notes --';
+    }
+});
+        input.autocomplete = 'off';
+
+        const arrow = document.createElement('span');
+        arrow.className = 'tbw-arrow';
+        arrow.textContent = '▼';
+
+        const list = document.createElement('div');
+        list.id = LIST_ID;
+
+        host.appendChild(input);
+        host.appendChild(arrow);
+        host.appendChild(list);
+
+        standardSelect.parentNode.insertBefore(host, standardSelect.nextSibling);
+
+        let filtered = [...TBW_OPTIONS_UW];
+        let activeIndex = -1;
+
+        function renderList(items) {
+            filtered = items;
+            activeIndex = items.length ? 0 : -1;
+
+            if (!items.length) {
+                list.innerHTML = `<div class="tbw-empty">No matches</div>`;
+                return;
+            }
+
+            list.innerHTML = items.map((item, idx) => `
+                <div class="tbw-item ${idx === activeIndex ? HIGHLIGHT_CLASS : ''}" data-index="${idx}">
+                    ${item}
+                </div>
+            `).join('');
+        }
+
+        function positionList() {
+            const rect = host.getBoundingClientRect();
+            const viewportHeight = window.innerHeight;
+            const availableBelow = viewportHeight - rect.bottom - 20;
+            list.style.maxHeight = Math.max(180, Math.min(availableBelow, 300)) + 'px';
+        }
+
+        function openList() {
+            positionList();
+            list.classList.add('show');
+        }
+
+       function closeList() {
+    list.classList.remove('show');
+    if (!input.value.trim() && document.activeElement !== input) {
+        input.placeholder = '-- TBW Notes --';
+    }
+}
+
+       function applyItem(value) {
+    fillNotes(notesTextarea, value);
+    input.value = '';
+    input.placeholder = '-- TBW Notes --';
+    closeList();
+    input.blur();
+}
+
+        function cleanLabel(text) {
+    return norm(text).replace(/^tbw\s*-\s*/, '');
+}
+
+function filterItems(term) {
+    const q = norm(term);
+    if (!q) return [...TBW_OPTIONS_UW];
+
+    const scored = TBW_OPTIONS_UW
+        .map(item => {
+            const full = norm(item);
+            const clean = cleanLabel(item);
+            const words = clean.split(/\s+/);
+
+            let score = 999;
+
+            if (clean === q) score = 0;
+            else if (clean.startsWith(q)) score = 1;
+            else if (words.some(w => w.startsWith(q))) score = 2;
+            else if (clean.includes(q)) score = 3;
+            else if (full.includes(q)) score = 4;
+            else return null;
+
+            return { item, score, clean };
+        })
+        .filter(Boolean)
+        .sort((a, b) => {
+            if (a.score !== b.score) return a.score - b.score;
+            return a.clean.localeCompare(b.clean);
+        });
+
+    return scored.map(x => x.item);
+}
+
+        function refreshList() {
+            renderList(filterItems(input.value));
+            positionList();
+        }
+
+        function updateHighlight() {
+            const nodes = Array.from(list.querySelectorAll('.tbw-item'));
+            nodes.forEach((node, idx) => {
+                node.classList.toggle(HIGHLIGHT_CLASS, idx === activeIndex);
+            });
+
+            const activeNode = nodes[activeIndex];
+            if (activeNode) {
+                activeNode.scrollIntoView({ block: 'nearest' });
+            }
+        }
+
+        input.addEventListener('focus', () => {
+            refreshList();
+            openList();
+        });
+
+        input.addEventListener('input', () => {
+            refreshList();
+            openList();
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (!list.classList.contains('show') && (e.key === 'ArrowDown' || e.key === 'Enter')) {
+                refreshList();
+                openList();
+            }
+
+            if (!filtered.length) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIndex = Math.min(activeIndex + 1, filtered.length - 1);
+                updateHighlight();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIndex = Math.max(activeIndex - 1, 0);
+                updateHighlight();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const chosen = filtered[Math.max(activeIndex, 0)];
+                if (chosen) applyItem(chosen);
+            } else if (e.key === 'Escape') {
+                closeList();
+            }
+        });
+list.addEventListener('mousemove', (e) => {
+    const item = e.target.closest('.tbw-item');
+    if (!item) return;
+
+    const idx = Number(item.dataset.index);
+    if (idx !== activeIndex) {
+        activeIndex = idx;
+        updateHighlight();
+    }
+});
+        list.addEventListener('mousedown', (e) => {
+            const item = e.target.closest('.tbw-item');
+            if (!item) return;
+
+            e.preventDefault();
+            const idx = Number(item.dataset.index);
+            const chosen = filtered[idx];
+            if (chosen) applyItem(chosen);
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            if (!host.contains(e.target)) {
+                closeList();
+            }
+        });
+
+        arrow.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+
+            if (list.classList.contains('show')) {
+                closeList();
+            } else {
+                refreshList();
+                openList();
+                input.focus();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            if (list.classList.contains('show')) positionList();
+        });
+    }
+
+    function initTBWQuickSearch() {
         const standardSelect = document.getElementById('standardNote');
         const notesTextarea = document.getElementById('maincontent_NewNoteText');
 
         if (!standardSelect || !notesTextarea) return;
 
-        // Создаём новый select
-        const tbwSelect = document.createElement('select');
-        tbwSelect.id = 'tbwNotes';
-        tbwSelect.style.marginLeft = '8px';
-        tbwSelect.style.width = '28ex';
-
-        // Плейсхолдер
-        const placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = '-- TBW Notes --';
-        placeholder.selected = true;
-        tbwSelect.appendChild(placeholder);
-
-        // Список TBW-опций
-      const tbwOptionsUW = [
-
-    'TBW - Cust has an active loan with us',
-    'TBW - Cannot verify online banking',
-    'TBW - Unacceptable bank',
-    'TBW - Multiple Open Loan',
-    'TBW - Multiple inactive loans',
-    'TBW - Recently received a loan',
-    'TBW - Multiple Defaults',
-    'TBW - Stop payment',
-    'TBW - Low EOD balances',
-    'TBW - Last EOD is low',
-    'TBW - No Direct deposits',
-    'TBW - No last DD',
-    'TBW - Last DD is low',
-    'TBW - Negative account balance',
-    'TBW - Bank account is not unique',
-    'TBW - Business account',
-    'TBW - Minimum Income Requirement Not Met',
-    'TBW - Unacceptable payment frequency',
-    'TBW - Inconsistent income',
-    'TBW - Irregular online banking behavior',
-    'TBW - Withdraws funds after DDs',
-    'TBW - Transfers funds to another account',
-    'TBW - Low banking activity',
-    'TBW - No checking account',
-    'TBW - New bank account',
-    'TBW - New job',
-    'TBW - Cust in collection',
-    'TBW - Defaulted with us on the last payment',
-    'TBW - Cool off by collections',
-    'TBW - Not approved by collections',
-    'TBW - DO NOT LOAN',
-    'TBW - Cust in Military',
-    'TBW - Unemployed',
-    'TBW - Fraud',
-    'TBW - Other: '
-
-        ];
-
-
-        tbwOptionsUW.forEach(text => {
-            const opt = document.createElement('option');
-            opt.value = text;
-            opt.textContent = text;
-            tbwSelect.appendChild(opt);
-        });
-
-        // Вставляем справа от стандартного дропа
-        standardSelect.parentNode.insertBefore(tbwSelect, standardSelect.nextSibling);
-
-        // Логика подстановки текста
-        tbwSelect.addEventListener('change', function () {
-            const val = this.value;
-            if (!val) return;
-
-            // Полностью заменяем текст в поле Notes выбранным TBW reason
-            notesTextarea.value = val;
-
-            // Сбрасываем выбор обратно на плейсхолдер
-            this.value = '';
-        });
+        injectStyles();
+        buildUI(standardSelect, notesTextarea);
     }
 
-    // Ждём, пока DOM полностью загрузится
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initTBWDropdown);
+        document.addEventListener('DOMContentLoaded', initTBWQuickSearch);
     } else {
-        initTBWDropdown();
+        initTBWQuickSearch();
     }
 })();
-
