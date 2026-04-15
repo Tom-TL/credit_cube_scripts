@@ -17,9 +17,10 @@
     "Tom Harris",
     "Veronica Lodge",
     "Paul Caffrey",
-    "John Lim",
+    "Ben Jameson",
     "Desa Solingan",
     "Benjamin Alla",
+    "John Lim",
     "Monica Smith"
   ];
 
