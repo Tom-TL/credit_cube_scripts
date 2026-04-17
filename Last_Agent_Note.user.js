@@ -2,7 +2,7 @@
 // @name         Last Agent Note
 // @author       Tom Harris
 // @namespace    https://github.com/TOM-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Shows last Created By from Notes (skips exclusions)
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
@@ -12,8 +12,10 @@
 // ==/UserScript==
 
 
+
 (function () {
     'use strict';
+
 
     const EXCLUDED = [
         "tom harris",
@@ -227,11 +229,6 @@ pill.style.verticalAlign = "middle";
 });
 
 
-
-
-
-
-
         host.appendChild(btn);
     }
 
@@ -240,7 +237,5 @@ pill.style.verticalAlign = "middle";
     observer.observe(document.body, { childList: true, subtree: true });
 
     ensureUI();
-
-})();
 
 })();
