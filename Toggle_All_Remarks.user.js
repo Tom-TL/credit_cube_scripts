@@ -3,6 +3,7 @@
 // @author       Tom Harris & Liam Moss
 // @namespace    https://github.com/TOM-TL/credit_cube_scripts
 // @version      1.0
+// @description  Toggle all remarks on a customer's page
 // @match        https://apply.creditcube.com/plm.net/*LoanRemarks.aspx*
 // @match        https://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
