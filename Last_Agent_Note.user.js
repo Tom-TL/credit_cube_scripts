@@ -1,17 +1,15 @@
 // ==UserScript==
 // @name         Last Agent Note
 // @author       Tom Harris
+// @description  Shows last Created By from Notes (skips exclusions).
+// @version      1.3
 // @namespace    https://github.com/TOM-TL/credit_cube_scripts
-// @version      1.1
-// @description  Shows last Created By from Notes (skips exclusions)
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
-// @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Last_Agent_Note.user.js
 // @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Last_Agent_Note.user.js
 // @grant        none
+
 // ==/UserScript==
-
-
 
 (function () {
     'use strict';
@@ -227,6 +225,11 @@ pill.style.verticalAlign = "middle";
         return;
     }
 });
+
+
+
+
+
 
 
         host.appendChild(btn);
