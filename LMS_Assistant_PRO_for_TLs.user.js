@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.1
+// @version      1.1.2
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,10 +82,10 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.1';
+  const SCRIPT_VERSION = '1.1.2';
   const CHANGELOG = [
-    { version: '1.1.1', date: '2026-05-15', changes: [
-        { script: 'Google form', text: 'BUG REPORT FORM URL added' },
+    { version: '1.1.2', date: '2026-05-15', changes: [
+        { script: 'Bulk Open tabs', text: 'Fixed match presense for reports' },
     ]},
     { version: '1.0.8', date: '2026-05-15', changes: [
         { script: 'UI', text: 'Iterated on popup styling.' },
@@ -2132,9 +2132,16 @@ function deactivateMenu() {
   // ─────────────────────────────────────────────────────────────────────────────
   // SCRIPT: bulkOpenTabs
   // ─────────────────────────────────────────────────────────────────────────────
-  if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
+if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     const SCRIPT_ID = 'cc_bulk_open_pending_loans_v1_7';
       if (document.getElementById(SCRIPT_ID)) return;
+
+      // ← Page guard: run only on allowed report presets
+      const ALLOWED_PRESETS = ['pending','deniedoftoday' ,"approvedoftoday" ,'search' ];
+      const _preset = (new URL(location.href).searchParams.get('reportpreset') || '').toLowerCase();
+      if (!ALLOWED_PRESETS.includes(_preset)) return;
+
+      // Speed: smaller = faster ...
 
       // Speed: smaller = faster (too small may trigger popup blocking)
       const OPEN_DELAY_MS = 70;
