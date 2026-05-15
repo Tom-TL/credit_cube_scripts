@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.3
+// @version      1.1.4
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,35 +82,13 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.3';
+  const SCRIPT_VERSION = '1.1.4';
   const CHANGELOG = [
-    { version: '1.1.3', date: '2026-05-15', changes: [
-        { script: 'Bulk Open tabs', text: 'Fixed match presense for reports' },
+    
+    { version: '1.1.4', date: '2026-05-15', changes: [
+        { script: 'TBW assistant', text: 'Fixed version popup' },
     ]},
-    { version: '1.0.8', date: '2026-05-15', changes: [
-        { script: 'UI', text: 'Iterated on popup styling.' },
-    ]},
-    { version: '1.0.7', date: '2026-05-15', changes: [
-        { script: 'UI', text: '"What\'s new" popup restyled to match the warm TBW theme (yellow card #ffeeb8 + amber button #c28a00).' },
-    ]},
-    { version: '1.0.6', date: '2026-05-15', changes: [
-        { script: 'All', text: 'GitHub auto-update enabled — TamperMonkey will pull updates automatically.' },
-        { script: 'TBW Assistant', text: 'Removed legacy yellow "updated to version" popup — replaced by the module-wide "What\'s new" popup.' },
-    ]},
-    { version: '1.0.5', date: '2026-05-14', changes: [
-        { script: 'UI', text: '"What\'s new" popup added — shows changes after each update.' },
-    ]},
-    { version: '1.0.4', date: '2026-05-14', changes: [
-        { script: 'TBW Assistant', text: 'Integrated into the module (Stage 2).' },
-        { script: 'TBW TL Helper', text: 'Integrated into the module (Stage 2).' },
-        { script: 'PIF DC Helper', text: 'Integrated into the module (Stage 2).' },
-    ]},
-    { version: '1.0.3', date: '2026-05-13', changes: [
-        { script: 'UI', text: 'Topbar layout fixed — menu now injects as native <td> in #TopMenu.' },
-    ]},
-    { version: '1.0.0', date: '2026-05-12', changes: [
-        { script: 'All', text: 'Initial release: 9 scripts integrated + 3 placeholders.' },
-    ]},
+   
   ];
 
 
@@ -3861,8 +3839,6 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
 const href = window.location.href.toLowerCase();
 
   // Версия скрипта для попапа обновления
-  const SCRIPT_VERSION = '1.2';
-  const VERSION_KEY = 'tbwAssistant_version_seen';
 
   if (href.includes('customerdetails.aspx')) {
     if (document.readyState === 'loading') {
@@ -3877,136 +3853,6 @@ const href = window.location.href.toLowerCase();
       handleDenyPopup();
     }
   }
-
-// Попап обновления версии (⚙ TBW Assistant — updated to version ...)
-  function maybeShowVersionNotice() {
-    try {
-      const lastSeen = localStorage.getItem(VERSION_KEY);
-      if (lastSeen === SCRIPT_VERSION) return;
-
-      // показываем и сразу помечаем версию как прочитанную
-      localStorage.setItem(VERSION_KEY, SCRIPT_VERSION);
-      showVersionPopup();
-    } catch (e) {
-      console.error('Version notice error', e);
-    }
-  }
-
-
-
- function showVersionPopup() {
-  // если уже открыт — второй раз не создаём
-  if (document.getElementById('tbw-version-overlay')) return;
-
-  const overlay = document.createElement('div');
-  overlay.id = 'tbw-version-overlay';
-  overlay.style.position = 'fixed';
-  overlay.style.inset = '0';
-  overlay.style.background = 'rgba(0,0,0,0.18)';
-  overlay.style.zIndex = '999996';
-
-  const box = document.createElement('div');
-  box.id = 'tbw-version-box';
-  box.style.position = 'fixed';
-  box.style.top = '50%';
-  box.style.left = '50%';
-  box.style.transform = 'translate(-50%, -50%)';
-  box.style.background = '#ffeeb8';
-  box.style.padding = '18px 26px 18px';
-  box.style.borderRadius = '8px';
-  box.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
-  box.style.fontFamily = '"Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
-  box.style.maxWidth = '500px';
-  box.style.maxHeight = 'none';
-  box.style.overflow = 'visible';
-  box.style.textAlign = 'left';
-  box.style.zIndex = '999997';
-  box.style.cursor = 'default';
-
-  const title = document.createElement('div');
-  title.style.fontWeight = '700';
-  title.style.fontSize = '20px';
-  title.style.marginBottom = '14px';
-  title.textContent = `⚙️ TBW Assistant — updated to version ${SCRIPT_VERSION}`;
-
-  const list = document.createElement('ul');
-  list.style.margin = '0 0 14px 18px';
-  list.style.padding = '0';
-  list.style.fontSize = '14px';
-  list.style.lineHeight = '1.4';
-
-  const li1 = document.createElement('li');
-  li1.textContent = 'Auto-denied popup shows for all customers ';
-
-  const li2 = document.createElement('li');
-  li2.textContent = 'Denial reason text is now fully cleaned for copying';
-
- const li3 = document.createElement('li');
-  li3.textContent = 'Review button selects and opens the newest Chirp/Yodlee report in CRP.';
-
- const li4 = document.createElement('li');
-  li4.textContent = 'Added banner: “Opening Chirp/Yodlee Report [date] ”'
-
-
- const li5 = document.createElement('li');
-  li5.textContent = 'Notification pop-up when script is updated.';
-
- const li6 = document.createElement('li');
-  li6.textContent = 'If [A]/[R]/[D] exists but there is no recent Chirp/Yodlee, shows a Decision Logic manual check alert (with Customer ID + Copy/Open buttons).';
-
-
-  list.appendChild(li1);
-  list.appendChild(li2);
-  list.appendChild(li3);
-  list.appendChild(li4);
-  list.appendChild(li5);
-  list.appendChild(li6);
-
-  const okBtn = document.createElement('button');
-  okBtn.textContent = 'OK';
-  okBtn.style.display = 'block';
-  okBtn.style.margin = '0 auto';
-  okBtn.style.minWidth = '80px';
-  okBtn.style.padding = '6px 18px';
-  okBtn.style.borderRadius = '4px';
-  okBtn.style.border = 'none';
-  okBtn.style.background = '#c28a00';
-  okBtn.style.color = '#fff';
-  okBtn.style.fontWeight = '600';
-  okBtn.style.cursor = 'pointer';
-
-  function closeVersionPopup() {
-    const ov = document.getElementById('tbw-version-overlay');
-    const bx = document.getElementById('tbw-version-box');
-    if (ov) ov.remove();
-    if (bx) bx.remove();
-    // снимаем обработчик Esc
-    document.removeEventListener('keydown', escHandler);
-  }
-
-  function escHandler(e) {
-    if (e.key === 'Escape') {
-      closeVersionPopup();
-    }
-  }
-
-  okBtn.addEventListener('click', closeVersionPopup);
-
-  // клик по затемнению — тоже закрыть
-  overlay.addEventListener('click', closeVersionPopup);
-  // клик по самому боксу не должен всплывать на оверлей
-  box.addEventListener('click', e => e.stopPropagation());
-
-  document.addEventListener('keydown', escHandler);
-
-  box.appendChild(title);
-  box.appendChild(list);
-  box.appendChild(okBtn);
-  document.body.appendChild(overlay);
-  document.body.appendChild(box);
-}
-
-
 
 
 
