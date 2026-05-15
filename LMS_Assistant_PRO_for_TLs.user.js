@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.6
+// @version      1.1.7
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,10 +82,10 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.6';
+  const SCRIPT_VERSION = '1.1.7';
   const CHANGELOG = [
     
-    { version: '1.1.6', date: '2026-05-15', changes: [
+    { version: '1.1.7', date: '2026-05-15', changes: [
         { script: 'Major fix', text: 'Fixed version ' },
     ]},
    
@@ -162,10 +162,6 @@
   // ╚═════════════════════════════════════════════════════════════════════════╝
   const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // ╔═════════════════════════════════════════════════════════════════════════╗
-  // ║  🟢 ACTIVE SCRIPTS TRACKER — green dot in dropdown                      ║
-  // ╚═════════════════════════════════════════════════════════════════════════╝
-  const _activeScripts = new Set();
 
   // ╔═════════════════════════════════════════════════════════════════════════╗
   // ║  🛡️ SAFE SCRIPT RUNNER (try/catch per script — isolation)              ║
@@ -173,7 +169,6 @@
   function runScript(scriptId, fn) {
     try {
       fn();
-      _activeScripts.add(scriptId);
     } catch (e) {
       console.error(`[LMS Assistant PRO TLs] Script "${scriptId}" crashed:`, e);
     }
@@ -264,15 +259,8 @@ function injectMenuStyles() {
       border-top: none;
     }
 
-    .lms-tl-active-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #4CAF50;
-      box-shadow: 0 0 4px rgba(76,175,80,0.6);
-      flex-shrink: 0;
-      display: none;
-    }
+   
+    
   `;
 
   const styleEl = document.createElement('style');
@@ -427,10 +415,7 @@ function buildMenu() {
       const title = document.createElement('span');
       title.textContent = script.name;
 
-      const activeDot = document.createElement('span');
-      activeDot.className = 'lms-tl-active-dot';
-      activeDot.id = `lms-tl-dot-${script.id}`;
-      activeDot.title = 'Active on this page';
+     
 const info = document.createElement('img');
 info.src = 'https://cdn-icons-png.flaticon.com/512/108/108153.png';
 info.alt = 'Info';
@@ -445,7 +430,7 @@ Object.assign(info.style, {
   opacity: '0.9',
   flexShrink: '0'
 });
-      left.appendChild(activeDot);
+    
       left.appendChild(title);
       left.appendChild(info);
 
@@ -535,11 +520,7 @@ dropdown.style.top = `${rect.bottom + window.scrollY}px`;
     clearTimeout(hideTimer);
     positionDropdown();
 
-    // Update green dots for active scripts
-    SCRIPT_REGISTRY.forEach(s => {
-      const dot = document.getElementById(`lms-tl-dot-${s.id}`);
-      if (dot) dot.style.display = _activeScripts.has(s.id) ? 'inline-block' : 'none';
-    });
+  
 
     dropdown.style.display = 'block';
 
