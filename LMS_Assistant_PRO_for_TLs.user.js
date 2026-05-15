@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.2
+// @version      1.1.3
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,9 +82,9 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.2';
+  const SCRIPT_VERSION = '1.1.3';
   const CHANGELOG = [
-    { version: '1.1.2', date: '2026-05-15', changes: [
+    { version: '1.1.3', date: '2026-05-15', changes: [
         { script: 'Bulk Open tabs', text: 'Fixed match presense for reports' },
     ]},
     { version: '1.0.8', date: '2026-05-15', changes: [
@@ -2157,10 +2157,15 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
         else window.alert(msg);
       }
 
-      function buildAbsoluteUrl(href) {
-        try { return new URL(href, window.location.origin).href; }
-        catch { return href; }
-      }
+   function buildAbsoluteUrl(href) {
+    try {
+        const u = new URL(href, window.location.origin);
+        if (!u.pathname.startsWith('/plm.net/')) {
+            u.pathname = '/plm.net' + u.pathname;
+        }
+        return u.href;
+    } catch { return href; }
+}
 
       function getCustomerUrlsFromTable() {
         const table = $('table.DataTable.FixedHeader');
