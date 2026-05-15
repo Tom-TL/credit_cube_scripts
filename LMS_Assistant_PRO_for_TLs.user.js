@@ -84,16 +84,15 @@
   // ╚═════════════════════════════════════════════════════════════════════════╝
   const SCRIPT_VERSION = '1.0.9';
   const CHANGELOG = [
-
     { version: '1.0.9', date: '2026-05-15', changes: [
-       { script: 'UI', text: 'Restyled "what\'s new" popup — white card with amber header for cleaner look.' },
-   ]},
-    
+        { script: 'UI', text: 'Restyled "what\'s new" popup — white card with amber header for cleaner look.' },
+    ]},
     { version: '1.0.8', date: '2026-05-15', changes: [
+        { script: 'UI', text: 'Iterated on popup styling.' },
+    ]},
+    { version: '1.0.7', date: '2026-05-15', changes: [
         { script: 'UI', text: '"What\'s new" popup restyled to match the warm TBW theme (yellow card #ffeeb8 + amber button #c28a00).' },
     ]},
-
-    
     { version: '1.0.6', date: '2026-05-15', changes: [
         { script: 'All', text: 'GitHub auto-update enabled — TamperMonkey will pull updates automatically.' },
         { script: 'TBW Assistant', text: 'Removed legacy yellow "updated to version" popup — replaced by the module-wide "What\'s new" popup.' },
@@ -642,7 +641,7 @@ function deactivateMenu() {
     // Backdrop
     const backdrop = document.createElement('div');
     backdrop.id = 'lms-tl-changelog-popup';
-Object.assign(backdrop.style, {
+    Object.assign(backdrop.style, {
       position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.45)',
       zIndex: '2147483647', display: 'flex',
       alignItems: 'center', justifyContent: 'center',
@@ -651,58 +650,71 @@ Object.assign(backdrop.style, {
 
     // Card
     const card = document.createElement('div');
-  Object.assign(card.style, {
-      background: '#fff',
-      color: '#333',
+    Object.assign(card.style, {
+      background: '#ffffff',
+      color: '#1a1a1a',
       borderRadius: '10px',
       width: 'min(460px, 92vw)',
       maxHeight: '80vh',
       display: 'flex', flexDirection: 'column',
-      boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+      boxShadow: '0 6px 20px rgba(0,0,0,0.30)',
       overflow: 'hidden',
       textAlign: 'left',
     });
 
-    // Header (title)
+    // Header (amber bar)
     const header = document.createElement('div');
-   Object.assign(header.style, {
+    Object.assign(header.style, {
       background: '#c28a00',
       padding: '14px 22px',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       flexShrink: '0',
     });
     header.innerHTML =
-      `<span style="font-weight:500;font-size:15px;color:#fff;">⚙️ LMS Assistant PRO (TLs) — what's new</span>
-       <span style="font-size:12px;font-weight:500;color:#fff;opacity:0.9;margin-left:10px;white-space:nowrap;">v${fromVersion} → v${SCRIPT_VERSION}</span>`;
+      `<span style="font-weight:600;font-size:15px;color:#ffffff;">⚙️ LMS Assistant PRO (TLs) — what's new</span>
+       <span style="font-size:12px;font-weight:500;color:#ffffff;opacity:0.92;margin-left:10px;white-space:nowrap;">v${fromVersion} → v${SCRIPT_VERSION}</span>`;
     card.appendChild(header);
 
     // Body (scrollable)
     const body = document.createElement('div');
-  Object.assign(body.style, {
-      padding: '16px 22px 8px',
+    Object.assign(body.style, {
+      padding: '16px 22px 12px',
       overflowY: 'auto',
       fontSize: '14px',
       lineHeight: '1.5',
       flex: '1 1 auto',
-      color: '#333',
+      color: '#1a1a1a',
+      background: '#ffffff',
     });
 
     entries.forEach(entry => {
+      // version row: bold version + grey date
       const versionRow = document.createElement('div');
-     versionRow.style.cssText = 'margin:0 0 10px;font-size:13px;display:flex;align-items:baseline;gap:8px;';
-      
+      versionRow.style.cssText = 'margin:6px 0 8px;display:flex;align-items:baseline;gap:8px;';
+      versionRow.innerHTML =
+        `<span style="font-weight:600;color:#1a1a1a;font-size:14px;">v${entry.version}</span>` +
+        `<span style="color:#888;font-size:12px;">${entry.date}</span>`;
       body.appendChild(versionRow);
 
+      // changes list
       const ul = document.createElement('ul');
-      ul.style.cssText = 'margin:0 0 12px 18px;padding:0;';
+      ul.style.cssText = 'margin:0 0 14px 0;padding:0;list-style:none;';
       entry.changes.forEach(ch => {
         const li = document.createElement('li');
-        li.style.cssText = 'margin:3px 0;color:#3a2d00;';
+        li.style.cssText = 'margin:6px 0;display:flex;gap:10px;align-items:flex-start;';
+
         const tag = document.createElement('span');
         tag.textContent = ch.script;
-     versionRow.innerHTML = `<span style="font-weight:500;color:#3a2d00;font-size:14px;">v${entry.version}</span><span style="color:#999;font-size:12px;">${entry.date}</span>`;
+        tag.style.cssText =
+          'display:inline-block;flex-shrink:0;margin-top:2px;' +
+          'padding:2px 9px;border-radius:4px;' +
+          'background:#fceec5;color:#5a4400;' +
+          'font-size:11px;font-weight:600;letter-spacing:0.2px;';
+
         const txt = document.createElement('span');
         txt.textContent = ch.text;
+        txt.style.cssText = 'font-size:14px;color:#1a1a1a;line-height:1.5;';
+
         li.appendChild(tag);
         li.appendChild(txt);
         ul.appendChild(li);
@@ -714,27 +726,27 @@ Object.assign(backdrop.style, {
 
     // Footer (button)
     const footer = document.createElement('div');
-   Object.assign(footer.style, {
+    Object.assign(footer.style, {
       padding: '12px 22px 16px',
-      borderTop: '1px solid #f0f0f0',
+      borderTop: '1px solid #ececec',
       display: 'flex', justifyContent: 'flex-end',
       flexShrink: '0',
+      background: '#ffffff',
     });
 
     const btn = document.createElement('button');
     btn.textContent = 'OK';
     Object.assign(btn.style, {
-      padding: '7px 22px',
+      padding: '7px 24px',
       borderRadius: '5px',
       border: 'none',
       background: '#c28a00',
-      color: '#fff',
-      fontWeight: '500',
+      color: '#ffffff',
+      fontWeight: '600',
       fontSize: '13px',
       cursor: 'pointer',
       fontFamily: 'inherit',
     });
-    
     btn.onmouseover = () => { btn.style.filter = 'brightness(1.08)'; };
     btn.onmouseout  = () => { btn.style.filter = ''; };
     btn.onclick = () => {
@@ -744,7 +756,7 @@ Object.assign(backdrop.style, {
     footer.appendChild(btn);
     card.appendChild(footer);
 
-    // Click on backdrop closes too (but click inside card doesn't bubble)
+    // Click on backdrop closes too
     card.addEventListener('click', e => e.stopPropagation());
     backdrop.addEventListener('click', () => btn.click());
 
