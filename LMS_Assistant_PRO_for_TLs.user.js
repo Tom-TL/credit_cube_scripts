@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0.9
+// @version      1.1.0
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,10 +82,10 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.0.9';
+  const SCRIPT_VERSION = '1.1.0';
   const CHANGELOG = [
-    { version: '1.0.9', date: '2026-05-15', changes: [
-        { script: 'UI', text: 'Restyled "what\'s new" popup — white card with amber header for cleaner look.' },
+    { version: '1.1.0', date: '2026-05-15', changes: [
+        { script: 'UI', text: 'Restyled popup — white card with amber header for cleaner look.' },
     ]},
     { version: '1.0.8', date: '2026-05-15', changes: [
         { script: 'UI', text: 'Iterated on popup styling.' },
