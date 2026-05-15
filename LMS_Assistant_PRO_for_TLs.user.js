@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.5
+// @version      1.1.6
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,11 +82,11 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.5';
+  const SCRIPT_VERSION = '1.1.6';
   const CHANGELOG = [
     
-    { version: '1.1.5', date: '2026-05-15', changes: [
-        { script: 'Minor fix', text: 'Fixed version ' },
+    { version: '1.1.6', date: '2026-05-15', changes: [
+        { script: 'Major fix', text: 'Fixed version ' },
     ]},
    
   ];
@@ -158,11 +158,22 @@
   };
 
   // ╔═════════════════════════════════════════════════════════════════════════╗
+  // ║  ⏳ SHARED UTILITIES                                                    ║
+  // ╚═════════════════════════════════════════════════════════════════════════╝
+  const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ╔═════════════════════════════════════════════════════════════════════════╗
+  // ║  🟢 ACTIVE SCRIPTS TRACKER — green dot in dropdown                      ║
+  // ╚═════════════════════════════════════════════════════════════════════════╝
+  const _activeScripts = new Set();
+
+  // ╔═════════════════════════════════════════════════════════════════════════╗
   // ║  🛡️ SAFE SCRIPT RUNNER (try/catch per script — isolation)              ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
   function runScript(scriptId, fn) {
     try {
       fn();
+      _activeScripts.add(scriptId);
     } catch (e) {
       console.error(`[LMS Assistant PRO TLs] Script "${scriptId}" crashed:`, e);
     }
@@ -251,6 +262,16 @@ function injectMenuStyles() {
 
     #lms-tl-dropdown .lms-tl-cat:first-child {
       border-top: none;
+    }
+
+    .lms-tl-active-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4CAF50;
+      box-shadow: 0 0 4px rgba(76,175,80,0.6);
+      flex-shrink: 0;
+      display: none;
     }
   `;
 
@@ -405,6 +426,11 @@ function buildMenu() {
 
       const title = document.createElement('span');
       title.textContent = script.name;
+
+      const activeDot = document.createElement('span');
+      activeDot.className = 'lms-tl-active-dot';
+      activeDot.id = `lms-tl-dot-${script.id}`;
+      activeDot.title = 'Active on this page';
 const info = document.createElement('img');
 info.src = 'https://cdn-icons-png.flaticon.com/512/108/108153.png';
 info.alt = 'Info';
@@ -419,6 +445,7 @@ Object.assign(info.style, {
   opacity: '0.9',
   flexShrink: '0'
 });
+      left.appendChild(activeDot);
       left.appendChild(title);
       left.appendChild(info);
 
@@ -507,6 +534,12 @@ dropdown.style.top = `${rect.bottom + window.scrollY}px`;
   function activateMenu() {
     clearTimeout(hideTimer);
     positionDropdown();
+
+    // Update green dots for active scripts
+    SCRIPT_REGISTRY.forEach(s => {
+      const dot = document.getElementById(`lms-tl-dot-${s.id}`);
+      if (dot) dot.style.display = _activeScripts.has(s.id) ? 'inline-block' : 'none';
+    });
 
     dropdown.style.display = 'block';
 
@@ -938,7 +971,11 @@ function deactivateMenu() {
       }
 
       init();
-      new MutationObserver(init).observe(document.documentElement, {
+      let _dcDebounce = null;
+      new MutationObserver(() => {
+        clearTimeout(_dcDebounce);
+        _dcDebounce = setTimeout(init, 120);
+      }).observe(document.documentElement, {
         childList: true,
         subtree: true,
       });
@@ -949,11 +986,8 @@ function deactivateMenu() {
   // SCRIPT: reversedLoan
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('reversedLoan')) runScript('reversedLoan', function () {
-    // ===== SINGLETON =====
-      if (window.__CC_REVERSED_NOTIFY_V1__) return;
-      window.__CC_REVERSED_NOTIFY_V1__ = true;
 
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const sleep = _sleep;
 
       // ===== DOCS-STYLE TOAST =====
       function toast(msg, isErr = false) {
@@ -1221,8 +1255,11 @@ function deactivateMenu() {
       function boot() {
         injectButton();
       
-
-        const mo = new MutationObserver(() => injectButton());
+        let _rlDebounce = null;
+        const mo = new MutationObserver(() => {
+          clearTimeout(_rlDebounce);
+          _rlDebounce = setTimeout(injectButton, 120);
+        });
         mo.observe(document.body, { childList: true, subtree: true });
       }
 
@@ -1435,8 +1472,10 @@ function deactivateMenu() {
             historyBtn.insertAdjacentElement('afterend', btn);
         }
 
+        let _docsDebounce = null;
         const observer = new MutationObserver(() => {
-            ensureUI();
+            clearTimeout(_docsDebounce);
+            _docsDebounce = setTimeout(ensureUI, 120);
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
@@ -1649,7 +1688,11 @@ function deactivateMenu() {
             host.appendChild(btn);
         }
 
-        const observer = new MutationObserver(() => ensureUI());
+        let _lanDebounce = null;
+        const observer = new MutationObserver(() => {
+            clearTimeout(_lanDebounce);
+            _lanDebounce = setTimeout(ensureUI, 120);
+        });
         observer.observe(document.body, { childList: true, subtree: true });
 
         ensureUI();
@@ -2007,7 +2050,7 @@ function deactivateMenu() {
         }
       }
 
-      function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+      const sleep = _sleep;
 
       /* ===============================================================
          UI INJECTION
@@ -2499,7 +2542,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       // -------------------------
       // Helpers
       // -------------------------
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const sleep = _sleep;
       const qs = (sel, root = document) => root.querySelector(sel);
 
       function isPendingPresetPage() {
@@ -3152,7 +3195,11 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
                 localStorage.setItem(STORAGE_KEY, compactOnGlobal ? '1' : '0');
             }
 
-            const observer = new MutationObserver(() => removeOldToggles());
+            let _cdlDebounce = null;
+            const observer = new MutationObserver(() => {
+                clearTimeout(_cdlDebounce);
+                _cdlDebounce = setTimeout(removeOldToggles, 120);
+            });
             observer.observe(document.body, { childList: true, subtree: true });
 
             // стартовое применение состояния
@@ -3172,7 +3219,6 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   // SCRIPT: autoAssign
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('autoAssign')) runScript('autoAssign', function () {
-    if (window.__SA_ONCE__) return; window.__SA_ONCE__ = true;
 
       // Only on Pending Loans
       const usp = new URLSearchParams(location.search);
@@ -3181,7 +3227,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       // ---------- helpers ----------
       const $  = (s, r=document) => r.querySelector(s);
       const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
-      const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+      const sleep = _sleep;
       const uniq=(a)=>[...new Set(a)];
       const norm = s => (s||'').replace(/\([^)]*\)\s*$/,'').replace(/\s+/g,' ').trim().toLowerCase();
 
@@ -5171,7 +5217,7 @@ const TL_LIST = [
   const BTN_ID_ESIG   = "tm_tl_send_esig";
   const CONTAINER_MARK = "tm_tbw_container_mark_v1";
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const sleep = _sleep;
   const norm  = (s) => (s ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
   const isVisible = (el) => !!el && (el.getClientRects?.().length || el.offsetParent !== null);
 
@@ -6052,11 +6098,8 @@ const TL_LIST = [
   // Original source: pif_dc_helper.js
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('pifDcHelper')) runScript('pifDcHelper', function () {
-// ===== SINGLETON GUARD =====
-  if (window.__CC_PIF_UI13_LOGIC47__) return;
-  window.__CC_PIF_UI13_LOGIC47__ = true;
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const sleep = _sleep;
 
   // ===== IDS =====
   const BTN_IDS = {
@@ -6667,7 +6710,11 @@ const TL_LIST = [
   function boot() {
     injectUI();
   
-    const mo = new MutationObserver(() => injectUI());
+    let _pifDebounce = null;
+    const mo = new MutationObserver(() => {
+      clearTimeout(_pifDebounce);
+      _pifDebounce = setTimeout(injectUI, 120);
+    });
     mo.observe(document.documentElement, { childList: true, subtree: true });
   }
 
