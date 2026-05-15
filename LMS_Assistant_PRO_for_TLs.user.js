@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.4
+// @version      1.1.5
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,11 +82,11 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.4';
+  const SCRIPT_VERSION = '1.1.5';
   const CHANGELOG = [
     
-    { version: '1.1.4', date: '2026-05-15', changes: [
-        { script: 'TBW assistant', text: 'Fixed version popup' },
+    { version: '1.1.5', date: '2026-05-15', changes: [
+        { script: 'Minor fix', text: 'Fixed version ' },
     ]},
    
   ];
@@ -957,10 +957,10 @@ function deactivateMenu() {
 
       // ===== DOCS-STYLE TOAST =====
       function toast(msg, isErr = false) {
-        let box = document.getElementById('ccDocsToast');
+       let box = document.getElementById('ccToast_reversedLoan');
         if (!box) {
           box = document.createElement('div');
-          box.id = 'ccDocsToast';
+        box.id = 'ccToast_reversedLoan';
           box.style.position = 'fixed';
           box.style.bottom = '20px';
           box.style.right = '20px';
@@ -1215,15 +1215,21 @@ function deactivateMenu() {
         maxBtn.parentNode.insertBefore(btn, maxBtn.nextSibling);
       }
 
+
+    
       // self-heal like your other scripts
       function boot() {
         injectButton();
-        setInterval(injectButton, 2500);
+      
 
         const mo = new MutationObserver(() => injectButton());
         mo.observe(document.body, { childList: true, subtree: true });
       }
 
+
+
+
+    
       boot();
   });
 
@@ -5192,10 +5198,10 @@ const TL_LIST = [
 
   // ===== DOCS-STYLE TOAST =====
   function toast(message, isErr = false) {
-    let box = document.getElementById("ccDocsToast");
+    let box = document.getElementById("ccToast_tbwHelper");
     if (!box) {
       box = document.createElement("div");
-      box.id = "ccDocsToast";
+     box.id = "ccToast_tbwHelper";
       box.style.position = "fixed";
       box.style.bottom = "20px";
       box.style.right = "20px";
@@ -6087,10 +6093,10 @@ const TL_LIST = [
 
   // ===== TOAST (STACK like alerts) =====
   function toast(msg, type = 'ok') {
-    let box = document.getElementById('ccDocsToast');
+   let box = document.getElementById('ccToast_pifDc');
     if (!box) {
       box = document.createElement('div');
-      box.id = 'ccDocsToast';
+      box.id = 'ccToast_pifDc';
       box.style.position = 'fixed';
       box.style.bottom = '18px';
       box.style.right = '18px';
@@ -6660,7 +6666,7 @@ const TL_LIST = [
   // ===== SELF-HEAL =====
   function boot() {
     injectUI();
-    setInterval(injectUI, 700);
+  
     const mo = new MutationObserver(() => injectUI());
     mo.observe(document.documentElement, { childList: true, subtree: true });
   }
