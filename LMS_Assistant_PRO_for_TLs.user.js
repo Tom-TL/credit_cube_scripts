@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0.7
+// @version      1.0.8
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
-// @author       Nikita (Credit Sense)
+// @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
 // @match        http*://*/plm.net/*EditLoanDenialReasons.aspx*
 // @run-at       document-end
@@ -82,14 +82,12 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.0.7';
+  const SCRIPT_VERSION = '1.0.8';
   const CHANGELOG = [
+    { version: '1.0.8', date: '2026-05-15', changes: [
+        { script: 'UI', text: '"What\'s new" popup restyled to match the warm TBW theme (yellow card #ffeeb8 + amber button #c28a00).' },
+    ]},
 
-     // ⬇ Новая запись СВЕРХУ
-  { version: '1.0.7', date: '2026-05-16', changes: [
-      { script: 'Reversed Loan', text: 'Button colour changed from red to orange.' },
-  ]},
-  // ⬇ Всё остальное — без изменений
     
     { version: '1.0.6', date: '2026-05-15', changes: [
         { script: 'All', text: 'GitHub auto-update enabled — TamperMonkey will pull updates automatically.' },
@@ -640,67 +638,63 @@ function deactivateMenu() {
     const backdrop = document.createElement('div');
     backdrop.id = 'lms-tl-changelog-popup';
     Object.assign(backdrop.style, {
-      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.55)',
+      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.18)',
       zIndex: '2147483647', display: 'flex',
       alignItems: 'center', justifyContent: 'center',
-      fontFamily: 'Segoe UI, Arial, sans-serif',
+      fontFamily: '"Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
     });
 
     // Card
     const card = document.createElement('div');
     Object.assign(card.style, {
-      background: 'rgba(0,0,0,0.95)',
-      color: '#fff',
-      border: '1px solid rgb(175, 209, 255)',
-      borderRadius: '10px',
-      width: 'min(560px, 92vw)',
+      background: '#ffeeb8',
+      color: '#3a2d00',
+      borderRadius: '8px',
+      width: 'min(520px, 92vw)',
       maxHeight: '80vh',
       display: 'flex', flexDirection: 'column',
-      boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
       overflow: 'hidden',
+      textAlign: 'left',
     });
 
-    // Header
+    // Header (title)
     const header = document.createElement('div');
     Object.assign(header.style, {
-      padding: '14px 18px',
-      background: 'rgb(175, 209, 255)',
-      color: '#000',
-      fontWeight: '700',
-      fontSize: '15px',
-      letterSpacing: '0.3px',
-      textTransform: 'uppercase',
-      borderBottom: '1px solid rgba(0,0,0,0.2)',
+      padding: '18px 26px 6px',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      flexShrink: '0',
     });
-    header.innerHTML = `<span>🛠️ LMS Assistant PRO (TLs) — What's New</span>
-      <span style="font-size:12px;font-weight:600;opacity:0.75">v${fromVersion} → v${SCRIPT_VERSION}</span>`;
+    header.innerHTML =
+      `<span style="font-weight:700;font-size:20px;color:#3a2d00;">⚙️ LMS Assistant PRO (TLs) — What's New</span>
+       <span style="font-size:12px;font-weight:600;color:#7a5d00;margin-left:10px;white-space:nowrap;">v${fromVersion} → v${SCRIPT_VERSION}</span>`;
     card.appendChild(header);
 
     // Body (scrollable)
     const body = document.createElement('div');
     Object.assign(body.style, {
-      padding: '14px 18px',
+      padding: '6px 26px 4px',
       overflowY: 'auto',
-      fontSize: '13px',
-      lineHeight: '1.55',
+      fontSize: '14px',
+      lineHeight: '1.45',
       flex: '1 1 auto',
+      color: '#3a2d00',
     });
 
     entries.forEach(entry => {
       const versionRow = document.createElement('div');
-      versionRow.style.cssText = 'margin-bottom:6px;color:rgb(175,209,255);font-weight:600;font-size:13px;';
+      versionRow.style.cssText = 'margin:8px 0 4px;color:#7a5d00;font-weight:700;font-size:13px;';
       versionRow.textContent = `v${entry.version}  •  ${entry.date}`;
       body.appendChild(versionRow);
 
       const ul = document.createElement('ul');
-      ul.style.cssText = 'margin:0 0 14px 18px;padding:0;';
+      ul.style.cssText = 'margin:0 0 12px 18px;padding:0;';
       entry.changes.forEach(ch => {
         const li = document.createElement('li');
-        li.style.cssText = 'margin:3px 0;';
+        li.style.cssText = 'margin:3px 0;color:#3a2d00;';
         const tag = document.createElement('span');
         tag.textContent = ch.script;
-        tag.style.cssText = 'display:inline-block;padding:1px 7px;margin-right:8px;background:rgba(175,209,255,0.18);border:1px solid rgba(175,209,255,0.5);border-radius:4px;font-size:11px;font-weight:600;color:rgb(175,209,255);';
+        tag.style.cssText = 'display:inline-block;padding:1px 8px;margin-right:8px;background:#c28a00;border-radius:4px;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.2px;';
         const txt = document.createElement('span');
         txt.textContent = ch.text;
         li.appendChild(tag);
@@ -712,31 +706,30 @@ function deactivateMenu() {
 
     card.appendChild(body);
 
-    // Footer
+    // Footer (button)
     const footer = document.createElement('div');
     Object.assign(footer.style, {
-      padding: '12px 18px',
-      borderTop: '1px solid rgba(255,255,255,0.12)',
-      display: 'flex', justifyContent: 'flex-end',
-      gap: '8px',
+      padding: '6px 26px 18px',
+      display: 'flex', justifyContent: 'center',
+      flexShrink: '0',
     });
 
     const btn = document.createElement('button');
-    btn.textContent = 'Got it';
+    btn.textContent = 'OK';
     Object.assign(btn.style, {
-      background: 'rgb(175, 209, 255)',
-      color: '#000',
+      display: 'block',
+      minWidth: '80px',
+      padding: '6px 18px',
+      borderRadius: '4px',
       border: 'none',
-      padding: '8px 22px',
-      borderRadius: '5px',
+      background: '#c28a00',
+      color: '#fff',
+      fontWeight: '600',
+      fontSize: '14px',
       cursor: 'pointer',
-      fontWeight: '700',
-      fontSize: '13px',
-      letterSpacing: '0.3px',
-      textTransform: 'uppercase',
       fontFamily: 'inherit',
     });
-    btn.onmouseover = () => { btn.style.filter = 'brightness(1.1)'; };
+    btn.onmouseover = () => { btn.style.filter = 'brightness(1.08)'; };
     btn.onmouseout  = () => { btn.style.filter = ''; };
     btn.onclick = () => {
       try { localStorage.setItem(CHANGELOG_SEEN_KEY, SCRIPT_VERSION); } catch {}
@@ -744,6 +737,10 @@ function deactivateMenu() {
     };
     footer.appendChild(btn);
     card.appendChild(footer);
+
+    // Click on backdrop closes too (but click inside card doesn't bubble)
+    card.addEventListener('click', e => e.stopPropagation());
+    backdrop.addEventListener('click', () => btn.click());
 
     backdrop.appendChild(card);
     (document.body || document.documentElement).appendChild(backdrop);
