@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.0
+// @version      1.1.1
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -12,7 +12,7 @@
 // @supportURL   https://github.com/Tom-TL/credit_cube_scripts/issues
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/LMS_Assistant_PRO_for_TLs.user.js
 // @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/LMS_Assistant_PRO_for_TLs.user.js
-// ==/UserScript==
+// ==/UserScript==  
 
 /*
   ╔════════════════════════════════════════════════════════════════════════════════╗
@@ -67,7 +67,7 @@
   // ║  🔗 BUG REPORT FORM URL                                                 ║
   // ║  ⬇ Replace this with your Google Form link once created                ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const BUG_REPORT_URL = 'https://docs.google.com/forms/d/e/REPLACE_WITH_YOUR_FORM_ID/viewform';
+  const BUG_REPORT_URL = 'https://forms.gle/cyWvuEfvYupSfThF6';
 
   // ╔═════════════════════════════════════════════════════════════════════════╗
   // ║  📜 CHANGELOG — used by the "What's new" popup                          ║
@@ -82,10 +82,10 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.0';
+  const SCRIPT_VERSION = '1.1.1';
   const CHANGELOG = [
-    { version: '1.1.0', date: '2026-05-15', changes: [
-        { script: 'UI', text: 'Restyled popup — white card with amber header for cleaner look.' },
+    { version: '1.1.1', date: '2026-05-15', changes: [
+        { script: 'Google form', text: 'BUG REPORT FORM URL added' },
     ]},
     { version: '1.0.8', date: '2026-05-15', changes: [
         { script: 'UI', text: 'Iterated on popup styling.' },
