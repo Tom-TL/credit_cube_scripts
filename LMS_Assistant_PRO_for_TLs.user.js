@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.1.8
+// @version      1.1.9
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -25,7 +25,7 @@
   ║   HOW TO USE:                                                                  ║
   ║   • Install once — handles all pages (CustomerDetails, LoansReport, popups)   ║
   ║   • Click "🛠️ LMS Assistant PRO (TLs)" in the topbar to open menu              ║
-  ║   • Toggle scripts on/off — page reloads automatically                         ║
+  ║   • Toggle scripts on/off — page reloads matically                         ║
   ║   • State saved per browser via localStorage                                   ║
   ║                                                                                ║
   ║   QUICK CUSTOMIZATION:                                                         ║
@@ -59,8 +59,8 @@
     aaBulkCleanup:      { enabled: true,  defaultOn: true  },
     // ===== POPUPS =====
     compactDenialList:  { enabled: true,  defaultOn: true  },
-    // ===== GLOBAL / AUTOMATION =====
-    autoAssign:         { enabled: true,  defaultOn: false },  // OFF by default — heavy automation
+    // ===== GLOBAL / MATION =====
+    Assign:         { enabled: true,  defaultOn: false },  // OFF by default — heavy mation
   };
 
   // ╔═════════════════════════════════════════════════════════════════════════╗
@@ -82,11 +82,11 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.1.8';
+  const SCRIPT_VERSION = '1.1.9';
   const CHANGELOG = [
     
-    { version: '1.1.8', date: '09/07/2026', changes: [
-        { script: 'Auto-Assign', text: 'Added Random mode, assignment progress, Pause/Resume, Stop completely, and detailed assignment summaries.' },
+    { version: '1.1.9', date: '09/07/2026', changes: [
+        { script: '-Assign', text: 'Added Random mode, assignment progress, Pause/Resume, Stop completely, and detailed assignment summaries.' },
     ]},
    
   ];
@@ -101,7 +101,7 @@
       description: 'Buttons: Adds quick comments PIF with DC and Reg pmt with DC' },
 
     { id: 'reversedLoan',       name: 'Reversed Loan Notifier',      category: 'Customer Page',
-      description: 'Reversed Loan button — auto-sends Email + Text notification.' },
+      description: 'Reversed Loan button — -sends Email + Text notification.' },
 
     { id: 'docsStatusChecker',  name: 'Docs Status Checker',         category: 'Customer Page',
       description: 'Adds Check Docs button — verifies if Additional Agreement was signed today.' },
@@ -113,7 +113,7 @@
       description: 'Qucik admin search field next to Processing Admin.' },
 
     { id: 'tbwAssistant',       name: 'TBW Assistant',               category: 'Customer Page',
-      description: 'Shows TBW denial reason, auto-denies certain reasons, Review in CRP and Copy.' },
+      description: 'Shows TBW denial reason, -denies certain reasons, Review in CRP and Copy.' },
 
     { id: 'tbwTlHelper',        name: 'TBW TL Helper',               category: 'Customer Page',
       description: 'Action buttons for TBW: 1- reassign to TL, remove TBW, put T&C Remark, 2 - send new E-Sign' },
@@ -134,8 +134,8 @@
       description: 'Makes the denial reasons popup shorter and faster-to-use list.' },
 
 
-    // AUTOMATION
-    { id: 'autoAssign',         name: 'Auto-Assign',                 category: 'Automation',
+    // MATION
+    { id: 'Assign',         name: '-Assign',                 category: 'mation',
       description: 'Distributes Pending leads to Day/Late/Everyone with Random mode, progress, Pause/Resume and Stop.' },
   ];
 
@@ -231,7 +231,7 @@ function injectMenuStyles() {
 
     #TopMenu {
       width: 900px !important;
-      table-layout: auto !important;
+      table-layout:  !important;
       white-space: nowrap !important;
     }
 
@@ -321,7 +321,7 @@ function buildMenu() {
   const topMenu = document.getElementById('TopMenu');
   if (topMenu) {
     topMenu.style.width = '900px';
-    topMenu.style.tableLayout = 'auto';
+    topMenu.style.tableLayout = '';
     topMenu.style.whiteSpace = 'nowrap';
   }
 
@@ -365,7 +365,7 @@ function buildMenu() {
     zIndex: '999999',
     boxShadow: '0 4px 12px rgba(0,0,0,0.45)',
     maxHeight: '85vh',
-    overflowY: 'auto'
+    overflowY: ''
   });
 
   document.body.appendChild(dropdown);
@@ -671,10 +671,10 @@ function deactivateMenu() {
     const body = document.createElement('div');
     Object.assign(body.style, {
       padding: '16px 22px 12px',
-      overflowY: 'auto',
+      overflowY: '',
       fontSize: '14px',
       lineHeight: '1.5',
-      flex: '1 1 auto',
+      flex: '1 1 ',
       color: '#1a1a1a',
       background: '#ffffff',
     });
@@ -1029,7 +1029,7 @@ function deactivateMenu() {
         } catch {}
       }
 
-      async function autoCloseDuringSend(maxMs = 6500) {
+      async function CloseDuringSend(maxMs = 6500) {
         const start = Date.now();
         while (Date.now() - start < maxMs) {
           closeLMSModals();
@@ -1134,10 +1134,10 @@ function deactivateMenu() {
         templateSel.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(200);
 
-        // real send + auto-close any Infinity confirm/ok
+        // real send + -close any Infinity confirm/ok
         ctrls.sendBtn.click();
         await sleep(200);
-        await autoCloseDuringSend(6500);
+        await CloseDuringSend(6500);
 
         if (pageShowsContactDisabled()) {
           closeLMSModals();
@@ -1480,7 +1480,7 @@ function deactivateMenu() {
             "system",
             "lead",
             "marketing_walter m_miller",
-            "auto extension",
+            " extension",
             "monica smith",
             "liam moss collections",
             "liam moss portfolio",
@@ -2065,7 +2065,7 @@ function deactivateMenu() {
         input.type = 'text';
         input.setAttribute('list', DLIST_ID);
         input.placeholder = 'Admin...';
-        input.autocomplete = 'off';
+        input.complete = 'off';
 
         const btnSet = document.createElement('button');
         btnSet.className = 'pa-btn pa-set';
@@ -2354,7 +2354,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
 
           /* Right pill status */
           #ccBulkOpenStatus{
-            margin-left: auto;
+            margin-left: ;
             font-size: 12px;
             color: #555;
             padding: 5px 10px;
@@ -2455,7 +2455,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
         input.className = 'ccBulkInput';
         input.type = 'text';
         input.inputMode = 'numeric';
-        input.autocomplete = 'off';
+        input.complete = 'off';
         input.placeholder = '0';
         input.value = '';
         input.id = 'ccBulkOpenN';
@@ -3013,7 +3013,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
             // позволяем body подстраиваться по высоте
             const style = document.createElement('style');
             style.textContent = `
-                html, body, body > form { height: auto !important; min-height: 0 !important; }
+                html, body, body > form { height:  !important; min-height: 0 !important; }
             `;
             document.head.appendChild(style);
 
@@ -3204,7 +3204,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('autoAssign')) runScript('autoAssign', function () {
 
-///////////////////////////////////////////
+///////////////////////////////////////////paste after this 
     
    if (window.__SA_ONCE__) return; window.__SA_ONCE__ = true;
 
@@ -3215,7 +3215,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   // ---------- helpers ----------
   const $  = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
-  const sleep = _sleep;
+  const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
   const uniq=(a)=>[...new Set(a)];
   const norm = s => (s||'').replace(/\([^)]*\)\s*$/,'').replace(/\s+/g,' ').trim().toLowerCase();
 
@@ -3536,7 +3536,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
               <div>Lead selection: ${randomMode ? 'Random' : 'Bottom-up'}</div>
               <div>Total visible leads: ${visible}</div>
               <div>Total leads to assign: ${totalAssign}</div>
-              ${remainder>0 ? `<div>Unassigned remainder: ${remainder}</div>` : ``}
+            ${remainder>0 ? `<div>Expected leads left after completion: ${remainder}</div>` : ``}
             </div>
             <div class="bd">
               <div class="col">
@@ -3564,18 +3564,18 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   }
 
   // ---------- summary modal ----------
-  function showSummaryModal({
-    title='Assigning completed',
-    perRep,
-    reps,
-    totalPlanned,
-    totalAssigned,
-    unassignedRemainder=0,
-    randomMode=false,
-    assignedDetails=[],
-    skippedNames=[],
-    remainingNames=[]
-  }) {
+ function showSummaryModal({
+  title='Assigning completed',
+  perRep,
+  reps,
+  totalPlanned,
+  totalAssigned,
+  currentVisible=null,
+  randomMode=false,
+  assignedDetails=[],
+  skippedNames=[],
+  remainingNames=[]
+}) {
     const rightTitle = remainingNames.length ? '⏸ Not assigned' : '⏭ Skipped';
     const rightNames = remainingNames.length ? uniq([...remainingNames,...skippedNames]) : skippedNames;
     const assignedReps = assignedDetails.filter(x=>x.count>=perRep).length;
@@ -3597,7 +3597,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
             ${remainingReps ? `<div>Remaining reps: ${remainingReps}</div>` : ``}
             <div>Leads assigned: ${totalAssigned} / ${totalPlanned}</div>
             ${leadsRemaining ? `<div>Leads remaining: ${leadsRemaining}</div>` : ``}
-            ${unassignedRemainder>0 ? `<div>Unassigned visible remainder: ${unassignedRemainder}</div>` : ``}
+         ${currentVisible !== null ? `<div>Current visible unassigned leads: ${currentVisible}</div>` : ``}
           </div>
           <div class="bd">
             <div class="col">
@@ -3799,11 +3799,13 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     const job=load(LS.JOB,null); if(!job) return false;
     if(ask && !confirm('Stop this assignment completely? It cannot be resumed after stopping.')) return false;
 
-    const details=getAssignedDetails(job);
-    const remaining=getRemainingNames(job);
-    const skipped=getSkippedNames(job);
-    const totalDone=getAssignedTotal(job);
-    clearJobState();
+  const details=getAssignedDetails(job);
+const remaining=getRemainingNames(job);
+const skipped=getSkippedNames(job);
+const totalDone=getAssignedTotal(job);
+const currentVisible=getBoxes().length;
+clearJobState();
+
     hideProgress();
     const pauseModal=$('#sa-pause-modal'); if(pauseModal) pauseModal.remove();
 
@@ -3813,7 +3815,10 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       reps:job.queue.length,
       totalPlanned:job.totalAssign,
       totalAssigned:totalDone,
-      unassignedRemainder:job.remainder||0,
+
+    currentVisible,
+
+
       randomMode:!!job.randomMode,
       assignedDetails:details,
       skippedNames:skipped,
@@ -4007,8 +4012,9 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
         const skippedNames  = getSkippedNames(job);
         const details       = getAssignedDetails(job);
         const totalDone     = getAssignedTotal(job);
+        const currentVisible = getBoxes().length;
 
-        save(LS.RES,{group:job.group,assignedNames,skippedNames,perRep:job.perRep,assignedDetails:details,totalDone});
+         save(LS.RES,{group:job.group,assignedNames,skippedNames,perRep:job.perRep,assignedDetails:details,totalDone});
         clearJobState();
         hideProgress();
 
@@ -4018,7 +4024,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
           reps:job.queue.length,
           totalPlanned:job.totalAssign,
           totalAssigned:totalDone,
-          unassignedRemainder:job.remainder||0,
+           currentVisible,
           randomMode:!!job.randomMode,
           assignedDetails:details,
           skippedNames
@@ -4136,8 +4142,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   }
   boot();
 
-
-//////////////
+//////////////////////////////////////// paste before this
   });
 
 
