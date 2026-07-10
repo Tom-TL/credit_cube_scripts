@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2.1
+// @version      1.2.2
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -60,7 +60,7 @@
     // ===== POPUPS =====
     compactDenialList:  { enabled: true,  defaultOn: true  },
     // ===== GLOBAL / AUTOMATION =====
-    Assign:         { enabled: true,  defaultOn: false },  // OFF by default — heavy automation
+    autoAssign:         { enabled: true,  defaultOn: false },  // OFF by default — heavy automation
   };
 
   // ╔═════════════════════════════════════════════════════════════════════════╗
@@ -82,10 +82,10 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.2.1';
+  const SCRIPT_VERSION = '1.2.2';
   const CHANGELOG = [
     
-    { version: '1.2.1', date: '10/07/2026', changes: [
+    { version: '1.2.2', date: '10/07/2026', changes: [
         { script: 'Auto-Assign', text: 'Added Random mode, assignment progress, Pause/Resume, Stop completely, and detailed assignment summaries.' },
     ]},
    
@@ -135,7 +135,7 @@
 
 
     // AUTOMATION
-    { id: 'Assign',         name: 'Auto-Assign',                 category: 'automation',
+    { id: 'autoAssign',         name: 'Auto-Assign',                 category: 'automation',
       description: 'Distributes Pending leads to Day/Late/Everyone with Random mode, progress, Pause/Resume and Stop.' },
   ];
 
