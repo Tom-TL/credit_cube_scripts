@@ -2,7 +2,7 @@
 // @name         Auto-Assign 2.0
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      2.0
+// @version      2.1
 // @description  Evenly assign visible Pending Loans (bottom→up or random) to Day/Late/Everyone using roster CSV. Includes progress, pause/resume and stop summary.
 // @match        https://apply.creditcube.com/plm.net/reports/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Auto_Assign.v2.user.js
@@ -14,6 +14,10 @@
 
 (function () {
   'use strict';
+
+
+
+    ///////////////////////////////////////////////////////////
   if (window.__SA_ONCE__) return; window.__SA_ONCE__ = true;
 
   // Only on Pending Loans
@@ -344,7 +348,7 @@
               <div>Lead selection: ${randomMode ? 'Random' : 'Bottom-up'}</div>
               <div>Total visible leads: ${visible}</div>
               <div>Total leads to assign: ${totalAssign}</div>
-              ${remainder>0 ? `<div>Unassigned remainder: ${remainder}</div>` : ``}
+            ${remainder>0 ? `<div>Expected leads left after completion: ${remainder}</div>` : ``}
             </div>
             <div class="bd">
               <div class="col">
@@ -372,18 +376,18 @@
   }
 
   // ---------- summary modal ----------
-  function showSummaryModal({
-    title='Assigning completed',
-    perRep,
-    reps,
-    totalPlanned,
-    totalAssigned,
-    unassignedRemainder=0,
-    randomMode=false,
-    assignedDetails=[],
-    skippedNames=[],
-    remainingNames=[]
-  }) {
+ function showSummaryModal({
+  title='Assigning completed',
+  perRep,
+  reps,
+  totalPlanned,
+  totalAssigned,
+  currentVisible=null,
+  randomMode=false,
+  assignedDetails=[],
+  skippedNames=[],
+  remainingNames=[]
+}) {
     const rightTitle = remainingNames.length ? '⏸ Not assigned' : '⏭ Skipped';
     const rightNames = remainingNames.length ? uniq([...remainingNames,...skippedNames]) : skippedNames;
     const assignedReps = assignedDetails.filter(x=>x.count>=perRep).length;
@@ -405,7 +409,7 @@
             ${remainingReps ? `<div>Remaining reps: ${remainingReps}</div>` : ``}
             <div>Leads assigned: ${totalAssigned} / ${totalPlanned}</div>
             ${leadsRemaining ? `<div>Leads remaining: ${leadsRemaining}</div>` : ``}
-            ${unassignedRemainder>0 ? `<div>Unassigned visible remainder: ${unassignedRemainder}</div>` : ``}
+         ${currentVisible !== null ? `<div>Current visible unassigned leads: ${currentVisible}</div>` : ``}
           </div>
           <div class="bd">
             <div class="col">
@@ -607,11 +611,13 @@
     const job=load(LS.JOB,null); if(!job) return false;
     if(ask && !confirm('Stop this assignment completely? It cannot be resumed after stopping.')) return false;
 
-    const details=getAssignedDetails(job);
-    const remaining=getRemainingNames(job);
-    const skipped=getSkippedNames(job);
-    const totalDone=getAssignedTotal(job);
-    clearJobState();
+  const details=getAssignedDetails(job);
+const remaining=getRemainingNames(job);
+const skipped=getSkippedNames(job);
+const totalDone=getAssignedTotal(job);
+const currentVisible=getBoxes().length;
+clearJobState();
+
     hideProgress();
     const pauseModal=$('#sa-pause-modal'); if(pauseModal) pauseModal.remove();
 
@@ -621,7 +627,10 @@
       reps:job.queue.length,
       totalPlanned:job.totalAssign,
       totalAssigned:totalDone,
-      unassignedRemainder:job.remainder||0,
+
+    currentVisible,
+
+
       randomMode:!!job.randomMode,
       assignedDetails:details,
       skippedNames:skipped,
@@ -815,8 +824,9 @@
         const skippedNames  = getSkippedNames(job);
         const details       = getAssignedDetails(job);
         const totalDone     = getAssignedTotal(job);
+        const currentVisible = getBoxes().length;
 
-        save(LS.RES,{group:job.group,assignedNames,skippedNames,perRep:job.perRep,assignedDetails:details,totalDone});
+         save(LS.RES,{group:job.group,assignedNames,skippedNames,perRep:job.perRep,assignedDetails:details,totalDone});
         clearJobState();
         hideProgress();
 
@@ -826,7 +836,7 @@
           reps:job.queue.length,
           totalPlanned:job.totalAssign,
           totalAssigned:totalDone,
-          unassignedRemainder:job.remainder||0,
+           currentVisible,
           randomMode:!!job.randomMode,
           assignedDetails:details,
           skippedNames
@@ -943,4 +953,8 @@
     else { clearJobState(); hideProgress(); }
   }
   boot();
+
+///////////////////////////////////
+
+
 })();
