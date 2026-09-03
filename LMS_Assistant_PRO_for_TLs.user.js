@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2.2
+// @version      1.2.3
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,9 +82,13 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.2.2';
+  const SCRIPT_VERSION = '1.2.3';
   const CHANGELOG = [
-    
+
+    { version: '1.2.3', date: '09/03/2026', changes: [
+        { script: 'Processing Admin Quick Search', text: 'Fixed: admin list cache had no expiry, so newly added admins never appeared until the cache was manually cleared. Added a 6-hour TTL — the list now refreshes itself automatically.' },
+    ]},
+
     { version: '1.2.2', date: '10/07/2026', changes: [
         { script: 'Auto-Assign', text: 'Added Random mode, assignment progress, Pause/Resume, Stop completely, and detailed assignment summaries.' },
     ]},
@@ -1711,6 +1715,7 @@ function deactivateMenu() {
       const DLIST_ID  = 'cc-pa-datalist';
       const IFRAME_ID = 'cc-pa-iframe';
       const CACHE_KEY = 'cc_pa_admin_cache_v2.4';
+      const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 часов — после этого кэш считается устаревшим
 
       /* ===============================================================
          STATE
@@ -1933,29 +1938,47 @@ function deactivateMenu() {
         if (loadState === 'loading') return;
         loadState = 'loading';
 
-        // Try cache first
+        // Try cache first — but only if it's still fresh (TTL)
         try {
           const raw = localStorage.getItem(CACHE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
-            adminNames = parsed;
-            fillDatalist(adminNames);
-            loadState = 'done';
-            return;
+            // Поддержка старого формата кэша (просто массив, без ts) —
+            // такой кэш считаем устаревшим и обновляем сразу.
+            const isFreshObj = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                                && Array.isArray(parsed.names) && typeof parsed.ts === 'number';
+            if (isFreshObj && (Date.now() - parsed.ts) < CACHE_TTL_MS) {
+              adminNames = parsed.names;
+              fillDatalist(adminNames);
+              loadState = 'done';
+              return;
+            }
+            // Кэш просрочен или в старом формате — используем его как временный
+            // фолбэк (чтобы даталист не был пустым, пока грузится свежий список),
+            // но всё равно идём за актуальными данными ниже.
+            if (isFreshObj) {
+              adminNames = parsed.names;
+              fillDatalist(adminNames);
+            } else if (Array.isArray(parsed)) {
+              adminNames = parsed;
+              fillDatalist(adminNames);
+            }
           }
         } catch { localStorage.removeItem(CACHE_KEY); }
 
-        // Load from page in hidden iframe
+        // Load from page in hidden iframe (первый запуск ИЛИ кэш устарел)
         try {
           const { sel } = await loadIframePage(loanId);
           const names = normalizeNames([...sel.options].map(o => o.textContent.trim()));
           adminNames = names;
           fillDatalist(adminNames);
-          localStorage.setItem(CACHE_KEY, JSON.stringify(adminNames));
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ names: adminNames, ts: Date.now() }));
           loadState = 'done';
         } catch (e) {
           console.warn('[CC-PA] Failed to load admin list:', e);
-          loadState = 'idle'; // allow retry
+          // Если свежий список не подгрузился, но был фолбэк из старого кэша —
+          // не блокируем работу поиска, просто разрешаем повторную попытку позже.
+          loadState = adminNames.length ? 'done' : 'idle';
         }
       }
 
