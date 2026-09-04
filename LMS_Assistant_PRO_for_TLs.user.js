@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2.3
+// @version      1.2.4
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,10 +82,10 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.2.3';
+  const SCRIPT_VERSION = '1.2.4';
   const CHANGELOG = [
 
-    { version: '1.2.3', date: '09/03/2026', changes: [
+    { version: '1.2.4', date: '09/04/2026', changes: [
         { script: 'Processing Admin Quick Search', text: 'Fixed: admin list cache had no expiry, so newly added admins never appeared until the cache was manually cleared. Added a 6-hour TTL — the list now refreshes itself automatically.' },
     ]},
 
