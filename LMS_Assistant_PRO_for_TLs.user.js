@@ -1707,7 +1707,7 @@ function deactivateMenu() {
         "iryna stadnyk_realstore","oleksii suprun_realstore","donald white_realstore",
         "iryna stadnyk","oleksii suprun","donald white",
         "viktoriia artomtseva","miguel gordon","yauhenia h","yurii holskyi","vitalii k",
-        "oleksandr pilyugin","alex voloshyn","raman vysotski"
+        "oleksandr pilyugin","alex voloshyn","raman vysotski", "oleksandr bilokrynytskyi", "anthony smith", "yulia kalashnykov", "serhii bruh" 
       ]);
 
       const HOST_ID   = 'cc-pa-host';
