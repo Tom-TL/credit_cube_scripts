@@ -2,11 +2,11 @@
 // @name         $50 Email + Status
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.0
+// @version      1.1
 // @description  Sets Reduced Payment Given status and reliably sends the $50 payment NSF email
 // @match        *://apply.creditcube.com/plm.net/customers/CustomerDetails.aspx*
-// @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/$50_Email_and_RP_Status.user.js
-// @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/$50_Email_and_RP_Status.user.js
+// @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/50_Email_and_RP_Status.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/50_Email_and_RP_Status.user.js
 // @run-at       document-end
 // @grant        none
 // ==/UserScript==
