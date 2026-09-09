@@ -2,7 +2,7 @@
 // @name         TBW Assistant
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2
+// @version      1.3
 // @description  Show TBW denial reason, auto-deny some reasons, quick Review to CRP and quick Deny popup, with Copy reason button and auto-denied notice.
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/TBW_Assistant.user.js
@@ -17,7 +17,7 @@
   const href = window.location.href.toLowerCase();
 
   // Версия скрипта для попапа обновления
-  const SCRIPT_VERSION = '1.2';
+  const SCRIPT_VERSION = '1.3';
   const VERSION_KEY = 'tbwAssistant_version_seen';
 
   if (href.includes('customerdetails.aspx')) {
@@ -1356,6 +1356,9 @@ function getCustomerIdFromPage() {
     if (lower.includes('unacceptable bank')) {
       return 'UNACCEPTABLE_BANK';
     }
+    if (lower.includes('unacceptable state')) {
+      return 'UNACCEPTABLE_STATE';
+    }
     if (lower.includes('not interested') || lower.includes('not interest')) {
       return 'NOT_INTERESTED';
     }
@@ -1395,7 +1398,8 @@ function getCustomerIdFromPage() {
         CANNOT_VERIFY_ONLINE_BANKING: /cannot\s+verify\s+online\s+banking/i,
         ACTIVE_LOAN_WITH_US:
           /(cust\s+has\s+an\s+active\s+loan\s+with\s+us|active\s+loan\s+with\s+us)/i,
-        UNACCEPTABLE_BANK: /unacceptable\s+bank/i
+        UNACCEPTABLE_BANK: /unacceptable\s+bank/i,
+        UNACCEPTABLE_STATE: /unacceptable\s+state/i
       };
 
       const regex = regexMap[reasonCode];
@@ -1444,4 +1448,3 @@ function getCustomerIdFromPage() {
     }
   }
 })();
-
