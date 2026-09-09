@@ -2,7 +2,7 @@
 // @name         TBW Assistant
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.3
+// @version      1.4
 // @description  Show TBW denial reason, auto-deny some reasons, quick Review to CRP and quick Deny popup, with Copy reason button and auto-denied notice.
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/TBW_Assistant.user.js
@@ -17,7 +17,7 @@
   const href = window.location.href.toLowerCase();
 
   // Версия скрипта для попапа обновления
-  const SCRIPT_VERSION = '1.3';
+  const SCRIPT_VERSION = '1.4';
   const VERSION_KEY = 'tbwAssistant_version_seen';
 
   if (href.includes('customerdetails.aspx')) {
@@ -92,23 +92,9 @@
   list.style.lineHeight = '1.4';
 
   const li1 = document.createElement('li');
-  li1.textContent = 'Auto-denied popup shows for all customers ';
-
-  const li2 = document.createElement('li');
-  li2.textContent = 'Denial reason text is now fully cleaned for copying';
-
- const li3 = document.createElement('li');
-  li3.textContent = 'Review button selects and opens the newest Chirp/Yodlee report in CRP.';
-
- const li4 = document.createElement('li');
-  li4.textContent = 'Added banner: “Opening Chirp/Yodlee Report [date] ”'
+  li1.textContent = 'Auto-denies unacceptable state';
 
 
- const li5 = document.createElement('li');
-  li5.textContent = 'Notification pop-up when script is updated.';
-
- const li6 = document.createElement('li');
-  li6.textContent = 'If [A]/[R]/[D] exists but there is no recent Chirp/Yodlee, shows a Decision Logic manual check alert (with Customer ID + Copy/Open buttons).';
 
 
   list.appendChild(li1);
