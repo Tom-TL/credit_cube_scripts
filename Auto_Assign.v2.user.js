@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Auto-Assign 2.2
+// @name         Auto-Assign 2.3
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      2.2
+// @version      2.3
 // @description  Persistent Auto Assign with stable roster loading, verified updates, safe recovery, hang-free engine, and clearer button feedback.
 // @match        https://apply.creditcube.com/plm.net/reports/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Auto_Assign.v2.user.js
@@ -130,7 +130,25 @@
     _adminCache={t:now,v};
     return v;
   };
-  const setAssignAdmin=(id)=>{ const dd=getAssignDD(); if(!dd) return false; dd.value=String(id); dd.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  // Plain `dd.value=x; dd.dispatchEvent(new Event('change'))` only updates the
+  // raw DOM property. If the report's dropdown is a React-controlled (or
+  // similar framework-controlled) <select>, the framework's own internal
+  // state tracks changes through its synthetic event system and can miss a
+  // scripted assignment entirely — the box visibly shows the new rep, but
+  // whatever actually gets submitted on Update can silently stay the
+  // *previous* selection. Using the native property setter before dispatching
+  // both 'input' and 'change' is the standard workaround: it forces the
+  // framework's change-detection to see a real transition instead of a
+  // same-value no-op.
+  const nativeSelectValueSetter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value')?.set;
+  const setAssignAdmin=(id)=>{
+    const dd=getAssignDD(); if(!dd) return false;
+    if(nativeSelectValueSetter) nativeSelectValueSetter.call(dd,String(id));
+    else dd.value=String(id);
+    dd.dispatchEvent(new Event('input',{bubbles:true}));
+    dd.dispatchEvent(new Event('change',{bubbles:true}));
+    return true;
+  };
 
   // ---------- roster CSV ----------
   const CSV_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vQgWqtMjWSM3pxso2zs8mUh51JS0u2EqsN5_d_l2rjhsXGlcQ-A0F2gzk8nRtrNmjG2YurSxqbcIo0Z/pub?gid=355516630&single=true&output=csv';
@@ -1463,6 +1481,21 @@ clearJobState();
         if(!setAssignAdmin(node.id)){
           blockJob('Processing Admin dropdown not found or representative could not be selected.'); return;
         }
+        // Give the report's own change handlers a moment to settle, then
+        // re-read the dropdown before submitting. Without this, a same-tick
+        // click could go out while the underlying app still has the
+        // *previous* admin selected, silently assigning this batch to the
+        // wrong rep even though our own JS property looked correct.
+        await sleep(200);
+        const ddCheck=getAssignDD();
+        if(!ddCheck || String(ddCheck.value)!==String(node.id)){
+          clearChecks();
+          blockJob(
+            'The Processing Admin selection did not hold before Update.',
+            `Expected admin id ${node.id} (${repName(job,node.id)}) but the dropdown shows "${ddCheck?String(ddCheck.value):'(missing)'}" right before submit. Nothing was submitted — reload and press Resume.`
+          );
+          return;
+        }
 
         const selectedIds=picked.map(getBoxKey).filter(Boolean);
         const pendingStep={
@@ -1494,9 +1527,9 @@ clearJobState();
 
       // Finish: summary modal
       if(job){
-        const assignedNames = job.queue.filter(q=>q.remaining===0).map(q=>repName(job,q.id));
-        const skippedNames  = getSkippedNames(job);
         const details       = getAssignedDetails(job);
+        const assignedNames = details.map(x=>x.name);
+        const skippedNames  = getSkippedNames(job);
         const totalDone     = getAssignedTotal(job);
         const currentVisible = getBoxes().length;
 
