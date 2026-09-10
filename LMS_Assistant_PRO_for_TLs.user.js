@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2.4
+// @version      1.2.6
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,8 +82,16 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.2.4';
+  const SCRIPT_VERSION = '1.2.6';
   const CHANGELOG = [
+
+    { version: '1.2.6', date: '09/10/2026', changes: [
+        { script: 'Auto-Assign', text: 'Updated to standalone v2.3 logic: more stable roster loading, verified updates, safer recovery, hang-free engine, and clearer button feedback.' },
+    ]},
+
+    { version: '1.2.5', date: '09/10/2026', changes: [
+        { script: 'TBW Assistant', text: 'Updated to match standalone v1.5 logic: now auto-denies the Unacceptable State reason as well.' },
+    ]},
 
     { version: '1.2.4', date: '09/04/2026', changes: [
         { script: 'Processing Admin Quick Search', text: 'Fixed: admin list cache had no expiry, so newly added admins never appeared until the cache was manually cleared. Added a 6-hour TTL — the list now refreshes itself automatically.' },
@@ -3229,11 +3237,26 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
 
 ///////////////////////////////////////////paste after this 
     
-   if (window.__SA_ONCE__) return; window.__SA_ONCE__ = true;
+
+
+
+    ///////////////////////////////////////////////////////////
+  if (window.__SA_ONCE__) return; window.__SA_ONCE__ = true;
+
+  // Emergency kill switch. If a page is stuck, run this in the console:
+  //   localStorage.setItem('sa:disabled','1'); localStorage.removeItem('sa:job');
+  //   localStorage.removeItem('sa:step'); location.reload();
+  if (localStorage.getItem('sa:disabled') === '1') {
+    console.warn('[Auto-Assign] disabled via sa:disabled. Remove the key to re-enable.');
+    return;
+  }
 
   // Only on Pending Loans
   const usp = new URLSearchParams(location.search);
-  if (usp.get('reportpreset') !== 'pending') return;
+  // Infinity can occasionally drop the reportpreset query after a POST. An
+  // existing job must still boot so its progress and recovery are not lost.
+  const hasSavedJobAtBoot=!!localStorage.getItem('sa:job');
+  if (usp.get('reportpreset') !== 'pending' && !hasSavedJobAtBoot) return;
 
   // ---------- helpers ----------
   const $  = (s, r=document) => r.querySelector(s);
@@ -3255,35 +3278,120 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     STEP:'sa:step',
     RES:'sa:res',
     LPR:'sa:lpr',                   // Leads per rep (int) — empty means auto
-    RANDOM:'sa:random'              // false = bottom-up, true = random visible leads
+    RANDOM:'sa:random',             // false = bottom-up, true = random visible leads
+    LOG:'sa:log',                   // rolling event log for post-mortems
+    ROSTER:'sa:rosterCache'         // last good CSV roster, used when the fetch fails
   };
-  const SS = { NAV:'sa:navigating', TOKEN:'sa:runToken' };
+  const SS = { NAV:'sa:navigating', TOKEN:'sa:runToken', TAB:'sa:tabId' };
+  const HEARTBEAT_MS=3000;
+  const OWNER_STALE_MS=120000;
+  const SAME_PAGE_VERIFY_MS=25000;
+  const PAGE_ID='page-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  const TAB_ID=(()=>{
+    let id=sessionStorage.getItem(SS.TAB);
+    if(!id){ id='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10); sessionStorage.setItem(SS.TAB,id); }
+    return id;
+  })();
 
   const save=(k,v)=>localStorage.setItem(k, JSON.stringify(v));
   const load=(k,d)=>{ try { return JSON.parse(localStorage.getItem(k) ?? JSON.stringify(d)); } catch { return d; } };
   const ssDel=(k)=>sessionStorage.removeItem(k);
+  const isOwner=(job)=>!!job && String(job.ownerTabId||'')===TAB_ID;
+
+  // Rolling event log. Survives reloads, so an odd run can be inspected after
+  // the fact instead of guessing.
+  const LOG_MAX=400;
+  function logEvent(kind,text){
+    try{
+      const log=load(LS.LOG,[]);
+      log.push({t:new Date().toISOString(),kind,text:String(text||'')});
+      while(log.length>LOG_MAX) log.shift();
+      save(LS.LOG,log);
+    }catch{}
+  }
+  const formatLog=()=>load(LS.LOG,[])
+    .map(e=>`${e.t.slice(11,19)}  ${e.kind.padEnd(9)}  ${e.text}`)
+    .join('\n')||'(empty)';
 
   // ---------- Infinity DOM hooks ----------
   const getAssignDD = ()=> $('#maincontent_AssignToProcessingAdminId') ||
     $$('select').find(s=>/Assign checked customers to processing admin/i.test(s.closest('tr,div,section')?.textContent||''));
   const getUpdateBtn = ()=> $$('input[type="submit"],button').find(b=>/update/i.test((b.value||b.textContent||'')));
   const getBoxes = ()=> $$('input[name="processingAdminLoanIds"]').filter(el=>el.offsetParent!==null && !el.disabled);
+  const getBoxKey = (el)=>{
+    const value=String(el?.value||'').trim();
+    if(value && value.toLowerCase()!=='on') return value;
+    const data=String(el?.getAttribute?.('data-id')||'').trim();
+    if(data) return data;
+    const id=String(el?.id||'').trim();
+    return id || '';
+  };
+  const getReportBoxKeys=()=>new Set($$('input[name="processingAdminLoanIds"]').map(getBoxKey).filter(Boolean));
+
+  // Cheap memoisation. getBoxes() and topIsNoAdmin() walk the whole report
+  // table, and they used to run on every mutation and every heartbeat.
+  const DOM_CACHE_MS=400;
+  let _boxCache={t:0,v:null};
+  let _adminCache={t:0,v:null};
+  const getBoxesCached=()=>{
+    const now=performance.now();
+    if(_boxCache.v && now-_boxCache.t<DOM_CACHE_MS) return _boxCache.v;
+    _boxCache={t:now,v:getBoxes()};
+    return _boxCache.v;
+  };
+  const invalidateDomCache=()=>{ _boxCache={t:0,v:null}; _adminCache={t:0,v:null}; };
+
   const clearChecks = ()=> getBoxes().forEach(b=>b.checked=false);
   const pickBottom = (n)=>{ const arr=getBoxes().reverse(); const out=[]; for(const b of arr){ if(!b.checked){ out.push(b); if(out.length>=n) break; } } return out; };
   const pickRandom = (n)=>{ const arr=getBoxes().filter(b=>!b.checked); for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr.slice(0,n); };
   const topFilterSelect=()=> $$('select').find(sel => (/Processing Admin/i.test(sel.closest('tr,div,section')?.textContent||'')) && sel!==getAssignDD());
-  const topIsNoAdmin=()=>{ const s=topFilterSelect(); if(!s) return true; const t=(s.options[s.selectedIndex]?.text||'').toLowerCase(); return t.includes('no admin'); };
-  const setAssignAdmin=(id)=>{ const dd=getAssignDD(); if(!dd) return false; dd.value=String(id); dd.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const topIsNoAdmin=()=>{
+    const now=performance.now();
+    if(_adminCache.v!==null && now-_adminCache.t<DOM_CACHE_MS) return _adminCache.v;
+    const s=topFilterSelect();
+    const v=!s ? true : (s.options[s.selectedIndex]?.text||'').toLowerCase().includes('no admin');
+    _adminCache={t:now,v};
+    return v;
+  };
+  // Plain `dd.value=x; dd.dispatchEvent(new Event('change'))` only updates the
+  // raw DOM property. If the report's dropdown is a React-controlled (or
+  // similar framework-controlled) <select>, the framework's own internal
+  // state tracks changes through its synthetic event system and can miss a
+  // scripted assignment entirely — the box visibly shows the new rep, but
+  // whatever actually gets submitted on Update can silently stay the
+  // *previous* selection. Using the native property setter before dispatching
+  // both 'input' and 'change' is the standard workaround: it forces the
+  // framework's change-detection to see a real transition instead of a
+  // same-value no-op.
+  const nativeSelectValueSetter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value')?.set;
+  const setAssignAdmin=(id)=>{
+    const dd=getAssignDD(); if(!dd) return false;
+    if(nativeSelectValueSetter) nativeSelectValueSetter.call(dd,String(id));
+    else dd.value=String(id);
+    dd.dispatchEvent(new Event('input',{bubbles:true}));
+    dd.dispatchEvent(new Event('change',{bubbles:true}));
+    return true;
+  };
 
   // ---------- roster CSV ----------
   const CSV_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vQgWqtMjWSM3pxso2zs8mUh51JS0u2EqsN5_d_l2rjhsXGlcQ-A0F2gzk8nRtrNmjG2YurSxqbcIo0Z/pub?gid=355516630&single=true&output=csv';
   let roster={day:[], late:[]};
   let id2name=new Map(), name2id=new Map();
+  let rosterLoading=false;
+  // True whenever the *current* roster in memory came from a cached copy
+  // that the user explicitly chose to use (via "Use last working list"),
+  // rather than a fresh CSV. Set only by useLastWorkingRoster(), never
+  // automatically — a failed/empty live fetch leaves the roster empty
+  // instead of silently substituting stale data.
+  let rosterStale=false;
+  let rosterStaleSince=0;
+  // Set whenever a live fetch fails or parses to zero IDs *and* a cached
+  // copy exists to fall back to. Drives the "Use last working list" button;
+  // cleared the moment a fresh live fetch succeeds, or the user applies it.
+  let cacheOffer=null;
 
-  async function loadRoster(force=false){
-    if(!force && (roster.day.length+roster.late.length)) return roster;
-    const res=await fetch(CSV_URL,{cache:'no-store'}); if(!res.ok) throw new Error('CSV '+res.status);
-    const lines=(await res.text()).split(/\r?\n/);
+  function parseRosterCsv(text){
+    const lines=text.split(/\r?\n/);
     const day=[], late=[];
     for(let i=1;i<lines.length;i++){
       if(!lines[i]) continue;
@@ -3293,8 +3401,82 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       if(/^\d+$/.test(d)) day.push(d);
       if(/^\d+$/.test(l)) late.push(l);
     }
-    roster={day:uniq(day), late:uniq(late)};
+    return {day:uniq(day), late:uniq(late)};
+  }
+
+  async function loadRoster(force=false){
+    if(!force && (roster.day.length+roster.late.length)) return roster;
+
+    // A plain fetch() has no timeout. When the sheet was slow or unreachable
+    // the await below never settled, boot() never finished, and the Assign
+    // buttons stayed disabled forever showing "Loading representatives…".
+    let text=null;
+    try{
+      const ctrl=new AbortController();
+      const timer=setTimeout(()=>ctrl.abort(),10000);
+      try{
+        const res=await fetch(CSV_URL,{cache:'no-store',signal:ctrl.signal});
+        if(!res.ok) throw new Error('CSV '+res.status);
+        text=await res.text();
+      } finally { clearTimeout(timer); }
+    }catch(err){
+      logEvent('roster','fetch failed: '+(err?.message||err));
+    }
+
+    if(text){
+      const parsed=parseRosterCsv(text);
+      if(parsed.day.length+parsed.late.length){
+        roster=parsed;
+        rosterStale=false;
+        cacheOffer=null;
+        save(LS.ROSTER,{ts:Date.now(),day:roster.day,late:roster.late});
+        return roster;
+      }
+      logEvent('roster','CSV parsed but contained no representative ids');
+    }
+
+    // Live data is missing or empty (network error, or the sheet itself is
+    // broken — e.g. every DayIDs/LateIDs cell is "#N/A"). Do NOT silently
+    // substitute a cached copy: leave the roster genuinely empty so Exclude/
+    // Choose/Assign all correctly reflect "no live data", and surface an
+    // explicit "Use last working list" option for the user to opt into
+    // instead. If the user never clicks it, everything just stays empty.
+    roster={day:[],late:[]};
+    const cached=load(LS.ROSTER,null);
+    cacheOffer=(cached && (cached.day?.length || cached.late?.length)) ? cached : null;
     return roster;
+  }
+
+  function previewCacheNames(cache){
+    const ids=uniq([...(cache?.day||[]), ...(cache?.late||[])]);
+    const dd=getAssignDD();
+    if(!dd) return ids.map(id=>`#${id}`);
+    const map=new Map();
+    for(const o of dd.options){
+      const id=(o.value||'').trim(), nm=(o.textContent||'').trim();
+      if(id) map.set(id,nm);
+    }
+    return ids.map(id=> map.get(id) || `#${id}`).sort((a,b)=>a.localeCompare(b));
+  }
+
+  // Explicit opt-in to run on the last known-good roster. Shows who's
+  // actually in it (cross-referenced against the live LMS dropdown) before
+  // applying anything, per the request to never populate Exclude/Choose/
+  // Assign from stale data without the user seeing and choosing it first.
+  function useLastWorkingRoster(){
+    if(!cacheOffer) return;
+    const when=cacheOffer.ts ? new Date(cacheOffer.ts).toLocaleString() : 'an earlier load';
+    const names=previewCacheNames(cacheOffer);
+    const list=names.length ? names.join(', ') : '(none matched the current LMS dropdown)';
+    const ok=confirm(`Use the last working roster from ${when}?\n\n${names.length} representative(s):\n${list}\n\nThis will fill Exclude/Choose and unlock Assign using this cached list until a fresh sheet load succeeds.`);
+    if(!ok) return;
+    roster={day:cacheOffer.day||[], late:cacheOffer.late||[]};
+    rosterStale=true;
+    rosterStaleSince=cacheOffer.ts||0;
+    cacheOffer=null;
+    rebuildMaps();
+    syncControls();
+    updateWarn();
   }
 
   function rebuildMaps(){
@@ -3311,16 +3493,68 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       Array.from(id2name.entries()).sort((a,b)=>a[1].localeCompare(b[1]))
         .forEach(([id,nm])=>{ const opt=document.createElement('option'); opt.value=nm; dl.appendChild(opt);});
     }
+    const active=load(LS.JOB,null);
+    if(active) hydrateJobNames(active);
   }
-  const names=(ids)=> ids.map(id=> id2name.get(id)||String(id));
+  const safeRosterName=(id)=>String(id2name.get(String(id))||'').trim();
+  const repName=(job,id)=>{
+    const key=String(id);
+    const saved=String(job?.repNames?.[key]||'').trim();
+    if(saved && saved!=='Representative' && saved!==key) return saved;
+    return safeRosterName(key)||saved||key;
+  };
+  const names=(ids)=>ids.map(id=>safeRosterName(id)||String(id));
+
+  function hydrateJobNames(job){
+    if(!job) return job;
+    job.repNames=job.repNames&&typeof job.repNames==='object' ? job.repNames : {};
+    let changed=false;
+    for(const q of job.queue||[]){
+      const key=String(q.id);
+      const existing=String(job.repNames[key]||'').trim();
+      if(existing && existing!=='Representative' && existing!==key) continue;
+      const name=safeRosterName(key);
+      if(name){ job.repNames[key]=name; changed=true; }
+    }
+    if(changed) save(LS.JOB,job);
+    return job;
+  }
+
+  async function ensureRepresentativeMaps(force=false,timeoutMs=15000){
+    rosterLoading=true;
+    try{
+      try { await loadRoster(force); } catch { return false; }
+      if(!(roster.day.length+roster.late.length)){
+        // No live data at all (and no cache was applied) — nothing to wait
+        // for. Clear any stale maps/datalists and bail out immediately
+        // instead of polling for the full timeout on a call that can't
+        // possibly succeed.
+        if(getAssignDD()) rebuildMaps();
+        return false;
+      }
+      const started=performance.now();
+      while(performance.now()-started<timeoutMs){
+        if(getAssignDD()){
+          rebuildMaps();
+          if(id2name.size>0) return true;
+        }
+        await sleep(150);
+      }
+      rebuildMaps();
+      return id2name.size>0;
+    } finally {
+      rosterLoading=false;
+      syncControls();
+    }
+  }
 
   // ---------- styles ----------
   function injectCSS(){
     if($('#sa-css')) return;
     const st=document.createElement('style'); st.id='sa-css';
     st.textContent=`
-      :root{--bg:#0f172a;--text:#e5e7eb;--mut:#94a3b8;--line:#1f2937;--chip:#111827;--y:#facc15;--b:#3b82f6;--p:#8b5cf6;--g:#6b7280;}
-      @media (prefers-color-scheme:light){:root{--bg:#fff;--text:#0f172a;--mut:#475569;--line:#e5e7eb;--chip:#eef2ff;}}
+      #sa,#sa-cfm,#sa-modal,#sa-pause-modal{--bg:#0f172a;--text:#e5e7eb;--mut:#94a3b8;--line:#1f2937;--chip:#111827;--y:#facc15;--b:#3b82f6;--p:#8b5cf6;--g:#6b7280;}
+      @media (prefers-color-scheme:light){#sa,#sa-cfm,#sa-modal,#sa-pause-modal{--bg:#fff;--text:#0f172a;--mut:#475569;--line:#e5e7eb;--chip:#eef2ff;}}
       #sa{position:fixed;left:16px;top:calc(100vh - 420px);width:960px;max-width:calc(100% - 32px);z-index:2147483647;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 20px rgba(0,0,0,.18);}
       #sa.collapsed .body{display:none;}
       .sa-inner{padding:12px 14px 16px;display:flex;flex-direction:column;gap:10px;}
@@ -3358,6 +3592,15 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       #sa-pause-job{background:#eab308;color:#111827;}
       #sa-resume-job{background:#16a34a;color:#fff;}
       #sa-stop-job{background:#dc2626;color:#fff;}
+      #sa-copy-job{background:#374151;color:#fff;}
+      #sa-takeover-job{background:#f97316;color:#fff;}
+      #sa-confirm-step{background:#16a34a;color:#fff;}
+      #sa-retry-step{background:#2563eb;color:#fff;}
+      #sa-progress.sa-owner-warning{background:rgba(234,179,8,.10);border-color:#ca8a04;}
+      #sa-progress.sa-blocked{background:rgba(220,38,38,.09);border-color:#dc2626;}
+      #sa-progress-details{display:none;margin-top:10px;grid-template-columns:repeat(3,minmax(180px,1fr));gap:10px;}
+      #sa-progress-details .sa-detail{min-width:0;}
+      #sa-progress-details pre{margin:4px 0 0;max-height:130px;overflow:auto;white-space:pre-wrap;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border:1px solid var(--line);border-radius:9px;padding:8px;background:rgba(0,0,0,.08);}
       @media (max-width:760px){.sa-progress-metrics{grid-template-columns:1fr;}}
 
       /* Modals */
@@ -3399,12 +3642,48 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
       .sa-label{font-size:12px; opacity:.85;}
       .sa-inline-note{font-size:12px;color:#eab308;margin-top:6px;}
     `;
-    document.head.appendChild(st);
+    (document.head||document.documentElement).appendChild(st);
   }
 
   // ---------- panel UI ----------
+  // The panel can be rebuilt many times per session (Infinity replaces the
+  // body on partial refreshes). Window listeners must therefore be installed
+  // exactly once, or every rebuild adds another mousemove handler and the tab
+  // eventually grinds to a halt.
+  let dragState={active:false,sx:0,sy:0,sl:0,st:0};
+  let windowHandlersBound=false;
+  function clampPanel(left,top){
+    const panel=$('#sa'); if(!panel) return null;
+    const l=Math.max(8,Math.min(left,window.innerWidth-panel.offsetWidth-8));
+    const t=Math.max(8,Math.min(top,window.innerHeight-panel.offsetHeight-8));
+    panel.style.left=l+'px'; panel.style.top=t+'px';
+    return {left:l,top:t};
+  }
+  function bindWindowHandlersOnce(){
+    if(windowHandlersBound) return;
+    windowHandlersBound=true;
+    window.addEventListener('mousemove',(e)=>{
+      if(!dragState.active) return;
+      clampPanel(dragState.sl+(e.clientX-dragState.sx), dragState.st+(e.clientY-dragState.sy));
+    });
+    window.addEventListener('mouseup',()=>{
+      if(!dragState.active) return;
+      dragState.active=false;
+      document.body.style.userSelect='';
+      const panel=$('#sa'); if(!panel) return;
+      const r=panel.getBoundingClientRect();
+      save(LS.POS,{left:r.left,top:r.top});
+    });
+    window.addEventListener('resize',()=>{
+      const panel=$('#sa'); if(!panel) return;
+      const r=panel.getBoundingClientRect();
+      const pos=clampPanel(r.left,r.top);
+      if(pos) save(LS.POS,pos);
+    });
+  }
+
   function buildPanel(){
-    if($('#sa')) return;
+    if($('#sa') || !document.body) return;
     const box=document.createElement('div'); box.id='sa';
     box.innerHTML=`
       <div class="sa-inner">
@@ -3433,6 +3712,11 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
           <span class="sa-small" id="sa-warn" style="margin-left:auto;"></span>
         </div>
 
+        <div class="sa-row" id="sa-cache-offer-row" style="display:none;margin-top:2px;">
+          <span class="sa-small" id="sa-cache-offer-text" style="color:#f59e0b;"></span>
+          <button id="sa-use-cache" class="sa-btn sa-gray" type="button">Use last working list</button>
+        </div>
+
         <div id="sa-progress">
           <div class="sa-progress-top">
             <div style="flex:1;min-width:360px;">
@@ -3445,14 +3729,24 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
                 <div id="sa-progress-next" class="sa-small"></div>
                 <div id="sa-progress-mode" class="sa-small"></div>
               </div>
+              <div id="sa-progress-detail" class="sa-small" style="display:none;margin-top:6px;color:#f59e0b;"></div>
             </div>
             <div class="sa-progress-actions">
               <button id="sa-pause-job" class="sa-btn" type="button">Pause</button>
               <button id="sa-resume-job" class="sa-btn" type="button" style="display:none;">Resume</button>
+              <button id="sa-confirm-step" class="sa-btn" type="button" style="display:none;">Assigned — Continue</button>
+              <button id="sa-retry-step" class="sa-btn" type="button" style="display:none;">Not assigned — Retry</button>
+              <button id="sa-takeover-job" class="sa-btn" type="button" style="display:none;">Take over session</button>
+              <button id="sa-copy-job" class="sa-btn" type="button" style="display:none;">Copy report</button>
               <button id="sa-stop-job" class="sa-btn" type="button">Stop completely</button>
             </div>
           </div>
           <div class="sa-progress-bar"><div id="sa-progress-fill"></div></div>
+          <div id="sa-progress-details">
+            <div class="sa-detail"><div class="sa-small">✅ Confirmed assigned</div><pre id="sa-detail-assigned">(none)</pre></div>
+            <div class="sa-detail"><div class="sa-small">⚠ Uncertain</div><pre id="sa-detail-uncertain">(none)</pre></div>
+            <div class="sa-detail"><div class="sa-small">⏸ Remaining</div><pre id="sa-detail-remaining">(none)</pre></div>
+          </div>
         </div>
 
         <div class="sa-body body">
@@ -3497,22 +3791,19 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
         </div>
       </div>`;
     document.body.appendChild(box);
+    lastProgressSig=''; // a fresh panel must always be repainted
 
     // position + drag
     const pos=load(LS.POS,{left:16,top:Math.max(16,window.innerHeight-420)});
     box.style.left=pos.left+'px'; box.style.top=pos.top+'px';
-    const drag=$('#sa-drag'); let m=false,sx=0,sy=0,sl=0,st=0;
-    drag.addEventListener('mousedown',e=>{ if(e.target.closest('.right')) return; m=true; sx=e.clientX; sy=e.clientY; const r=box.getBoundingClientRect(); sl=r.left; st=r.top; document.body.style.userSelect='none';});
-    window.addEventListener('mousemove',e=>{ if(!m) return; let l=sl+(e.clientX-sx), t=st+(e.clientY-sy);
-      l=Math.max(8,Math.min(l,window.innerWidth-box.offsetWidth-8));
-      t=Math.max(8,Math.min(t,window.innerHeight-box.offsetHeight-8));
-      box.style.left=l+'px'; box.style.top=t+'px';
+    $('#sa-drag').addEventListener('mousedown',e=>{
+      if(e.target.closest('.right')) return;
+      const panel=$('#sa'); if(!panel) return;
+      const r=panel.getBoundingClientRect();
+      dragState={active:true,sx:e.clientX,sy:e.clientY,sl:r.left,st:r.top};
+      document.body.style.userSelect='none';
     });
-    window.addEventListener('mouseup',()=>{ if(!m) return; m=false; document.body.style.userSelect=''; const r=box.getBoundingClientRect(); save(LS.POS,{left:r.left,top:r.top}); });
-    window.addEventListener('resize',()=>{ const r=$('#sa').getBoundingClientRect();
-      const l=Math.max(8,Math.min(r.left,window.innerWidth-$('#sa').offsetWidth-8));
-      const t=Math.max(8,Math.min(r.top,window.innerHeight-$('#sa').offsetHeight-8));
-      $('#sa').style.left=l+'px'; $('#sa').style.top=t+'px'; save(LS.POS,{left:l,top:t});});
+    bindWindowHandlersOnce();
 
     const collapsed=!!load(LS.COL,false);
     box.classList.toggle('collapsed',collapsed);
@@ -3693,6 +3984,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
         </div>
         <div class="ft">
           <button class="btn ghost" id="pause-keep" type="button">Keep paused</button>
+          <button class="btn ghost" id="pause-copy" type="button">Copy report</button>
           <button class="btn danger" id="pause-stop" type="button">Stop completely</button>
           <button class="btn success" id="pause-resume" type="button">Resume assignment</button>
         </div>
@@ -3703,6 +3995,7 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     wrap.addEventListener('click',(e)=>{ if(e.target===wrap) close(); });
     $('#pause-x').onclick=close;
     $('#pause-keep').onclick=close;
+    $('#pause-copy').onclick=()=>copyJobReport(job);
     $('#pause-resume').onclick=()=>{ close(); resumeCurrentJob(); };
     $('#pause-stop').onclick=()=>{ if(stopCurrentJob(true)) close(); };
   }
@@ -3744,27 +4037,156 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   const getRemainingRepCount=(job)=> job.queue.filter(q=>q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY).length;
   const getAssignedDetails=(job)=> job.queue.map(q=>({
     id:q.id,
-    name:id2name.get(q.id)||String(q.id),
+    name:repName(job,q.id),
     count:Number(job.assignedCounts?.[q.id]||0)
   })).filter(x=>x.count>0);
-  const getRemainingNames=(job)=> job.queue.filter(q=>q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY).map(q=>id2name.get(q.id)||String(q.id));
-  const getSkippedNames=(job)=> job.queue.filter(q=>q.remaining===Number.POSITIVE_INFINITY).map(q=>id2name.get(q.id)||String(q.id));
+  const getRemainingNames=(job)=> job.queue.filter(q=>q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY).map(q=>repName(job,q.id));
+  const getSkippedNames=(job)=> job.queue.filter(q=>q.remaining===Number.POSITIVE_INFINITY).map(q=>repName(job,q.id));
+  const getPendingStep=(job)=> job?.pendingStep || load(LS.STEP,null);
+  const isOwnerStale=(job)=>!!job && (Date.now()-Number(job.ownerHeartbeat||0))>OWNER_STALE_MS;
+  const formatStep=(step,job=load(LS.JOB,null))=>{
+    if(!step) return '(none)';
+    const name=repName(job,step.id);
+    const result=step.verification==='not_applied'
+      ? 'not applied — safe to retry'
+      : step.verification==='partial'
+        ? 'partially changed — manual check required'
+        : 'submitted, result unknown';
+    return `${name}: ${Number(step.expected||0)} ${result}`;
+  };
+
+  function cleanPendingUrl(){
+    const url=new URL(location.href);
+    url.hash='';
+    url.searchParams.set('reportpreset','pending');
+    return url.href;
+  }
+
+  function goToCleanPending(){
+    ssDel(SS.NAV);
+    location.replace(cleanPendingUrl());
+  }
+
+  // The POST response already contains the refreshed Pending report. Replace
+  // only the history entry, then keep processing in this document. This avoids
+  // an unnecessary second reload and removes the form-resubmission entry.
+  function markCurrentPageAsCleanGet(){
+    ssDel(SS.NAV);
+    try { history.replaceState(history.state||{},'',cleanPendingUrl()); } catch {}
+  }
+
+  function verifyPendingStep(step){
+    if(!step) return {state:'none',detail:'No pending step.'};
+    if(!getAssignDD() || !getUpdateBtn()){
+      return {state:'uncertain',detail:'The normal Pending report controls are not available. The LMS may be showing an error page.'};
+    }
+    if(!topIsNoAdmin()) return {state:'uncertain',detail:'The top Processing Admin filter is not set to no admin.'};
+    const selected=uniq((step.selectedIds||[]).map(String).filter(Boolean));
+    if(!selected.length || selected.length!==Number(step.expected||0)){
+      return {state:'uncertain',detail:'This step came from an older version or has no complete lead-ID snapshot.'};
+    }
+    const visible=getReportBoxKeys();
+    const stillVisible=selected.filter(id=>visible.has(id));
+    if(stillVisible.length===0){
+      return {state:'confirmed',detail:'All submitted lead IDs disappeared from the no-admin list.'};
+    }
+    if(stillVisible.length===selected.length){
+      return {state:'not_applied',detail:'All submitted lead IDs are still visible in the no-admin list.'};
+    }
+    return {
+      state:'partial',
+      detail:`${selected.length-stillVisible.length} of ${selected.length} submitted lead IDs disappeared; ${stillVisible.length} are still visible.`
+    };
+  }
+
+  function clearPendingStep(job){
+    localStorage.removeItem(LS.STEP);
+    delete job.pendingStep;
+    ssDel(SS.NAV);
+  }
+
+  function applyConfirmedStep(job,step,source='verified'){
+    if(!job || !step) return false;
+    job.confirmedSteps=Array.isArray(job.confirmedSteps)?job.confirmedSteps:[];
+    const stepId=String(step.stepId||`${step.id}:${step.ts||0}`);
+    if(job.confirmedSteps.some(s=>String(s.stepId)===stepId)){
+      clearPendingStep(job);
+      return true;
+    }
+    const idx=job.queue.findIndex(q=>String(q.id)===String(step.id));
+    if(idx<0) return false;
+    const node=job.queue[idx];
+    const applied=Math.min(Number(step.expected||0),Math.max(0,Number(node.remaining||0)));
+    node.remaining=Math.max(0,Number(node.remaining||0)-applied);
+    job.assignedCounts=job.assignedCounts||{};
+    job.assignedCounts[node.id]=Number(job.assignedCounts[node.id]||0)+applied;
+    node.tries=0;
+    job.lastId=node.id;
+    // Move to the next rep. Math.max() was used here, which meant that after a
+    // wrap-around round the cursor could never move back to reps 0..idx and
+    // they were starved of their quota for another full round.
+    job.idx=(idx+1)%Math.max(1,job.queue.length);
+    job.confirmedSteps.push({stepId,id:node.id,count:applied,confirmedAt:Date.now(),source});
+    logEvent('confirmed',`${repName(job,node.id)}: +${applied} (${source}), quota left ${node.remaining}`);
+    clearPendingStep(job);
+    job.status='running';
+    job.lastEngineActivity=Date.now();
+    delete job.blockReason;
+    delete job.blockDetail;
+    return true;
+  }
+
+  function reconcilePendingStep(job){
+    const step=getPendingStep(job);
+    if(!step) return 'none';
+    const check=verifyPendingStep(step);
+    if(check.state==='confirmed'){
+      if(!applyConfirmedStep(job,step,'lead-id verification')){
+        job.status='blocked';
+        job.blockReason='The submitted representative is no longer in the saved queue.';
+        job.blockDetail=check.detail;
+        save(LS.JOB,job);
+        return 'blocked';
+      }
+      save(LS.JOB,job);
+      return 'confirmed';
+    }
+    step.verification=check.state;
+    step.verificationDetail=check.detail;
+    job.pendingStep=step;
+    job.status='blocked';
+    job.blockReason=check.state==='not_applied'
+      ? 'The last Update did not assign the selected leads.'
+      : check.state==='partial'
+        ? 'The last Update produced a partial or ambiguous result.'
+        : 'The last submitted Update could not be verified safely.';
+    job.blockDetail=check.detail;
+    save(LS.STEP,step);
+    save(LS.JOB,job);
+    return 'blocked';
+  }
 
   function getNextRepName(job){
     if(!job) return '(none)';
     for(let i=job.idx;i<job.queue.length;i++){
       const q=job.queue[i];
-      if(q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY && (!job.lastId || String(q.id)!==String(job.lastId))) return id2name.get(q.id)||String(q.id);
+      if(q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY && (!job.lastId || String(q.id)!==String(job.lastId))) return repName(job,q.id);
     }
     for(let i=0;i<Math.min(job.idx,job.queue.length);i++){
       const q=job.queue[i];
-      if(q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY && (!job.lastId || String(q.id)!==String(job.lastId))) return id2name.get(q.id)||String(q.id);
+      if(q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY && (!job.lastId || String(q.id)!==String(job.lastId))) return repName(job,q.id);
     }
     return '(finishing)';
   }
 
-  function setAssignButtonsDisabled(disabled){
-    ['#sa-day','#sa-late','#sa-all'].forEach(sel=>{ const b=$(sel); if(b) b.disabled=disabled; });
+  // reason is shown as a tooltip while disabled=true, so a stuck-looking
+  // button always has a one-hover explanation instead of just going gray.
+  function setAssignButtonsDisabled(disabled,reason=''){
+    ['#sa-day','#sa-late','#sa-all'].forEach(sel=>{
+      const b=$(sel); if(!b) return;
+      b.disabled=disabled;
+      b.title=disabled ? (reason||'Not available right now.') : '';
+    });
   }
 
   function hideProgress(){
@@ -3772,27 +4194,111 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     setAssignButtonsDisabled(false);
   }
 
-  function updateProgress(job){
+  function restorePanelIfNeeded(){
+    if($('#sa') || !document.body) return;
+    injectCSS();
+    buildPanel();
+    bindUI();
+    renderChips();
+    rebuildMaps();
+    const job=load(LS.JOB,null);
+    if(job) updateProgress(job);
+  }
+
+  function buildReport(job){
+    if(!job) return 'No active Auto Assign job.';
+    const assigned=getAssignedDetails(job).map(x=>`- ${x.name}: ${x.count}`).join('\n')||'(none)';
+    const pending=getPendingStep(job);
+    const remaining=job.queue.filter(q=>q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY)
+      .map(q=>`- ${repName(job,q.id)}: ${q.remaining}`).join('\n')||'(none)';
+    const skipped=getSkippedNames(job).map(n=>`- ${n}`).join('\n')||'(none)';
+    return [
+      'AUTO ASSIGN REPORT',
+      `Status: ${job.status||'running'}`,
+      `${job.group||'Unknown'} · ${job.randomMode?'Random':'Bottom-up'} · ${job.perRep} leads per rep`,
+      `Planned total: ${job.totalAssign}`,
+      `Confirmed assigned total: ${getAssignedTotal(job)}`,
+      `Current visible unassigned leads: ${getBoxes().length}`,
+      '', 'Confirmed assigned:', assigned,
+      '', 'Uncertain:', pending ? `- ${formatStep(pending)}` : '(none)',
+      '', 'Remaining:', remaining,
+      '', 'Skipped:', skipped,
+      job.blockReason ? `\nReason: ${job.blockReason}` : '',
+      job.blockDetail ? `Detail: ${job.blockDetail}` : '',
+      '', 'Event log:', formatLog()
+    ].join('\n');
+  }
+
+  function copyJobReport(job=load(LS.JOB,null)){
+    const text=buildReport(job);
+    if(navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(()=>prompt('Copy report:',text));
+    else prompt('Copy report:',text);
+  }
+
+  let lastProgressSig='';
+  function updateProgress(job,force=false){
     const box=$('#sa-progress'); if(!box || !job) return;
+    // The heartbeat repaints this every 3s. Doing ~25 DOM writes each time for
+    // an unchanged job is wasted work, so bail out when nothing moved.
+    const sig=JSON.stringify([job.status,job.idx,job.lastId,job.assignedCounts,job.blockReason,
+      job.pendingStep?.stepId||null,isOwner(job),box.isConnected]);
+    if(!force && sig===lastProgressSig && box.style.display==='block') return;
+    lastProgressSig=sig;
     const assignedReps=getAssignedRepCount(job);
     const remainingReps=getRemainingRepCount(job);
     const assignedLeads=getAssignedTotal(job);
     const remainingLeads=Math.max(0,(job.totalAssign||0)-assignedLeads);
     const pct=job.totalAssign>0 ? Math.min(100,Math.round((assignedLeads/job.totalAssign)*100)) : 0;
     const paused=job.status==='paused';
+    const blocked=job.status==='blocked';
+    const owner=isOwner(job);
+    const pending=getPendingStep(job);
+    const recovery=!!pending && blocked;
+    const stale=!owner && isOwnerStale(job);
 
     box.style.display='block';
-    $('#sa-progress-title').textContent=paused ? 'Assignment paused' : 'Assignment in progress';
+    box.classList.toggle('sa-owner-warning',!owner);
+    box.classList.toggle('sa-blocked',blocked);
+    $('#sa-progress-title').textContent=!owner
+      ? stale ? 'Original Auto Assign tab is no longer active' : 'Auto Assign is already running in another tab'
+      : recovery ? 'Auto Assign — Recovery required'
+      : blocked ? 'Auto Assign paused due to LMS issue'
+      : paused ? 'Assignment paused' : 'Auto Assign — Running';
     $('#sa-progress-reps').textContent=`Assigned reps: ${assignedReps} / ${job.queue.length}`;
     $('#sa-progress-remaining-reps').textContent=`Remaining reps: ${remainingReps}`;
     $('#sa-progress-leads').textContent=`Leads assigned: ${assignedLeads} / ${job.totalAssign}`;
     $('#sa-progress-remaining-leads').textContent=`Leads remaining: ${remainingLeads}`;
-    $('#sa-progress-next').textContent=`Next rep: ${getNextRepName(job)}`;
+    $('#sa-progress-next').textContent=!owner
+      ? stale ? 'The owner heartbeat is stale. You can take over this saved session.' : 'Please continue, pause or stop it in the original tab.'
+      : recovery ? `Check: ${formatStep(pending,job)}`
+      : pending ? `Assigning to: ${repName(job,pending.id)} · waiting for LMS confirmation`
+      : blocked && job.blockReason ? `Reason: ${job.blockReason}` : `Next rep: ${getNextRepName(job)}`;
     $('#sa-progress-mode').textContent=`Leads per rep: ${job.perRep} · Mode: ${job.randomMode ? 'Random' : 'Bottom-up'}`;
+    $('#sa-progress-detail').style.display=job.blockDetail ? '' : 'none';
+    $('#sa-progress-detail').textContent=job.blockDetail||'';
     $('#sa-progress-fill').style.width=pct+'%';
-    $('#sa-pause-job').style.display=paused ? 'none' : '';
-    $('#sa-resume-job').style.display=paused ? '' : 'none';
-    setAssignButtonsDisabled(true);
+    // Pause used to be display:none while a batch was pending confirmation
+    // from the LMS, which happens on every single batch (submit → reload →
+    // verify). That made it disappear and reappear every 1-2s during a
+    // normal run. It now stays put like Stop does, just disabled with a
+    // tooltip for that brief window, so the layout doesn't jump.
+    const pauseAvailable=owner && !paused && !blocked;
+    const pauseBtn=$('#sa-pause-job');
+    pauseBtn.style.display=pauseAvailable ? '' : 'none';
+    pauseBtn.disabled=pauseAvailable && !!pending;
+    pauseBtn.title=pauseBtn.disabled ? 'Waiting for the last batch to be confirmed by the LMS…' : '';
+    $('#sa-resume-job').style.display=owner && (paused||blocked) && !pending ? '' : 'none';
+    $('#sa-resume-job').textContent=blocked ? 'Retry / Resume' : 'Resume';
+    $('#sa-confirm-step').style.display=owner && recovery ? '' : 'none';
+    $('#sa-retry-step').style.display=owner && recovery ? '' : 'none';
+    $('#sa-takeover-job').style.display=stale ? '' : 'none';
+    $('#sa-stop-job').style.display=owner ? '' : 'none';
+    $('#sa-copy-job').style.display=(paused||blocked||!owner) ? '' : 'none';
+    $('#sa-progress-details').style.display=(paused||blocked) && owner ? 'grid' : 'none';
+    $('#sa-detail-assigned').textContent=getAssignedDetails(job).map(x=>`- ${x.name}: ${x.count}`).join('\n')||'(none)';
+    $('#sa-detail-uncertain').textContent=recovery ? `- ${formatStep(pending,job)}` : '(none)';
+    $('#sa-detail-remaining').textContent=job.queue.filter(q=>q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY).map(q=>`- ${repName(job,q.id)}: ${q.remaining}`).join('\n')||'(none)';
+    setAssignButtonsDisabled(true,'An Auto Assign job is already active. Use Pause/Resume/Stop above.');
   }
 
   function clearJobState(){
@@ -3802,8 +4308,17 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     ssDel(SS.TOKEN);
   }
 
+  function blockJob(reason,detail=''){
+    const job=load(LS.JOB,null); if(!job || !isOwner(job)) return;
+    job.status='blocked'; job.blockReason=reason||'LMS report page is not ready.';
+    job.blockDetail=detail||'';
+    logEvent('blocked',`${job.blockReason} ${job.blockDetail}`.trim());
+    const step=load(LS.STEP,null); if(step) job.pendingStep=step;
+    save(LS.JOB,job); updateProgress(job);
+  }
+
   function pauseCurrentJob(){
-    const job=load(LS.JOB,null); if(!job) return;
+    const job=load(LS.JOB,null); if(!job || !isOwner(job)) return;
     job.status='paused';
     save(LS.JOB,job);
     updateProgress(job);
@@ -3811,15 +4326,75 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   }
 
   function resumeCurrentJob(){
-    const job=load(LS.JOB,null); if(!job) return;
+    const job=load(LS.JOB,null); if(!job || !isOwner(job)) return;
+    if(getPendingStep(job)){
+      alert('Resolve the last submitted step first: choose “Assigned — Continue” or “Not assigned — Retry”.\n\n'+formatStep(getPendingStep(job)));
+      updateProgress(job); return;
+    }
     job.status='running';
+    delete job.blockReason;
     save(LS.JOB,job);
     updateProgress(job);
-    runJob();
+    if(!getAssignDD() || !getUpdateBtn()) goToCleanPending();
+    else scheduleRun(50);
+  }
+
+  function markPendingAssigned(){
+    const job=load(LS.JOB,null); if(!job || !isOwner(job)) return;
+    const step=getPendingStep(job); if(!step) return;
+    const name=repName(job,step.id);
+    if(!confirm(`Confirm that ${Number(step.expected||0)} lead(s) were assigned to ${name}?\n\nOnly confirm after checking the LMS manually.`)) return;
+    if(!applyConfirmedStep(job,step,'manual confirmation')){
+      blockJob('Could not match the uncertain representative to the saved queue.'); return;
+    }
+    save(LS.JOB,job);
+    updateProgress(job);
+    markCurrentPageAsCleanGet();
+    scheduleRun(100);
+  }
+
+  function retryPendingStep(){
+    const job=load(LS.JOB,null); if(!job || !isOwner(job)) return;
+    const step=getPendingStep(job); if(!step) return;
+    const name=repName(job,step.id);
+    if(!confirm(`Retry ${Number(step.expected||0)} lead(s) for ${name}?\n\nUse this only after checking that the previous Update did not assign them.`)) return;
+    const idx=job.queue.findIndex(q=>String(q.id)===String(step.id));
+    if(idx<0){ blockJob('Could not match the uncertain representative to the saved queue.'); return; }
+    clearPendingStep(job);
+    job.idx=idx;
+    job.status='running';
+    delete job.blockReason;
+    delete job.blockDetail;
+    save(LS.JOB,job);
+    updateProgress(job);
+    markCurrentPageAsCleanGet();
+    scheduleRun(100);
+  }
+
+  function takeOverCurrentJob(){
+    const job=load(LS.JOB,null); if(!job || isOwner(job) || !isOwnerStale(job)) return;
+    if(!confirm('The original tab has not updated its heartbeat for at least 2 minutes. Take over this Auto Assign session in this tab?')) return;
+    job.ownerTabId=TAB_ID;
+    job.ownerHeartbeat=Date.now();
+    sessionStorage.setItem(SS.TOKEN,job.token||'');
+    if(getPendingStep(job)){
+      job.status='blocked';
+      job.blockReason='Recovered from an inactive tab. Verify the last submitted step.';
+    }
+    save(LS.JOB,job);
+    updateProgress(job);
+    if(getPendingStep(job)){
+      const result=reconcilePendingStep(job);
+      const fresh=load(LS.JOB,null); if(fresh) updateProgress(fresh);
+      if(result==='confirmed'){
+        markCurrentPageAsCleanGet();
+        scheduleRun(100);
+      }
+    } else if(job.status==='running') scheduleRun(50);
   }
 
   function stopCurrentJob(ask=true){
-    const job=load(LS.JOB,null); if(!job) return false;
+    const job=load(LS.JOB,null); if(!job || !isOwner(job)) return false;
     if(ask && !confirm('Stop this assignment completely? It cannot be resumed after stopping.')) return false;
 
   const details=getAssignedDetails(job);
@@ -3851,11 +4426,50 @@ clearJobState();
   }
 
   // ---------- start job ----------
+  let startingJob=false;
+  function cancelJobStart(message){
+    startingJob=false;
+    setAssignButtonsDisabled(false);
+    if(message) alert(message);
+  }
   async function startJob(group, baseIds){
-    if(load(LS.JOB,null)){ alert('An Auto Assign job is already active. Resume it or stop it completely first.'); return; }
+    if(startingJob) return;
+    if(load(LS.JOB,null)){
+      const active=load(LS.JOB,null); updateProgress(active);
+      alert(isOwner(active)
+        ? 'An Auto Assign job is already active. Resume it or stop it completely first.'
+        : 'Auto Assign is already running in another tab. Please finish, pause or stop it there.');
+      return;
+    }
     if(!topIsNoAdmin()){ alert('Please set top filter "Processing Admin" to "-- no admin --".'); return; }
 
+    startingJob=true;
+    setAssignButtonsDisabled(true,'Starting assignment…');
+    const warn=$('#sa-warn');
+    if(warn) warn.textContent='Loading representatives…';
+    let mapsReady=false;
+    try { mapsReady=await ensureRepresentativeMaps(false,15000); }
+    catch(err){ logEvent('roster','startJob failed: '+(err?.message||err)); }
+    finally { startingJob=false; rosterLoading=false; }
+    if(!mapsReady){
+      syncControls();
+      updateWarn();
+      alert('Representatives are not loaded from the LMS yet. Please click Refresh and try again.');
+      return;
+    }
+    if(warn) warn.textContent='';
+
     const poolBase=baseIds.filter(id=> id2name.has(id));
+    if(!baseIds.length){
+      setAssignButtonsDisabled(false);
+      alert(`No representatives were found in the ${group} roster.`);
+      return;
+    }
+    if(!poolBase.length){
+      setAssignButtonsDisabled(false);
+      alert('The roster loaded, but its representatives could not be matched to the LMS dropdown. Click Refresh and try again.');
+      return;
+    }
     const excl=new Set(load(LS.SAVED_IDS,[]));
     const filtered=poolBase.filter(id=> !excl.has(id)); // after exclusions
 
@@ -3866,10 +4480,10 @@ clearJobState();
       : filtered; // If empty -> All reps
 
     if (chooseSaved.size && finalPool.length===0){
-      alert('No representatives selected.');
+      cancelJobStart('No representatives selected.');
       return;
     }
-    if(!finalPool.length){ alert('No reps to assign (all excluded).'); return; }
+    if(!finalPool.length){ setAssignButtonsDisabled(false); alert('No reps to assign (all excluded).'); return; }
 
     const visible = getBoxes().length;
 
@@ -3878,19 +4492,19 @@ clearJobState();
     let perRep = null;
     if (lprValueRaw === '') {
       if (visible < finalPool.length){
-        alert('Not enough leads. Needed ' + finalPool.length + ', available ' + visible + '.');
+        cancelJobStart('Not enough leads. Needed ' + finalPool.length + ', available ' + visible + '.');
         return;
       }
       perRep = floorSplit(visible, finalPool.length);
     } else {
       const parsed = parseInt(lprValueRaw, 10);
       if (!Number.isFinite(parsed) || parsed < 1) {
-        alert('Leads per rep must be at least 1.');
+        cancelJobStart('Leads per rep must be at least 1.');
         return;
       }
       const needed = parsed * finalPool.length;
       if (visible < needed) {
-        alert(`Not enough leads. Needed ${needed}, available ${visible}.`);
+        cancelJobStart(`Not enough leads. Needed ${needed}, available ${visible}.`);
         return;
       }
       perRep = parsed;
@@ -3912,54 +4526,82 @@ clearJobState();
       assignees: names(finalPool),
       excluded: names([...excl])
     });
-    if(!ok) return;
+    if(!ok){ setAssignButtonsDisabled(false); return; }
 
     const token = Math.random().toString(36).slice(2);
     sessionStorage.setItem(SS.TOKEN, token);
-    const job={token, group, queue:buildQueue(finalPool, perRep), idx:0, lastId:null, perRep, totalAssign, remainder, visible0:visible, randomMode, status:'running', assignedCounts:{}};
+    const job={
+      token,
+      ownerTabId:TAB_ID,
+      ownerHeartbeat:Date.now(),
+      group,
+      queue:buildQueue(finalPool,perRep),
+      idx:0,
+      lastId:null,
+      perRep,
+      totalAssign,
+      remainder,
+      visible0:visible,
+      randomMode,
+      status:'running',
+      lastEngineActivity:Date.now(),
+      repNames:Object.fromEntries(finalPool.map(id=>[String(id),safeRosterName(id)||String(id)])),
+      assignedCounts:{},
+      confirmedSteps:[]
+    };
     save(LS.JOB, job);
+    save(LS.LOG,[]); // fresh log per job
+    logEvent('start',`${group}: ${finalPool.length} rep(s) x ${perRep} = ${totalAssign}, visible ${visible}, ${randomMode?'random':'bottom-up'}`);
     updateProgress(job);
-    runJob();
+    scheduleRun(0);
   }
 
   async function waitReady(ms=12000){
     const t=performance.now();
     while(performance.now()-t<ms){
-      if(document.readyState!=='loading' && (getAssignDD() || getBoxes().length)) return;
+      if(document.readyState!=='loading' && getAssignDD() && getUpdateBtn()) return true;
       await sleep(100);
     }
+    return false;
   }
 
   // ---------- engine ----------
   let running=false;
+  let runTimer=0;
+  function scheduleRun(delay=0){
+    clearTimeout(runTimer);
+    runTimer=setTimeout(()=>{
+      const job=load(LS.JOB,null);
+      if(job && isOwner(job) && job.status==='running') runJob();
+    },Math.max(0,delay));
+  }
+
   async function runJob(){
     if(running) return; running=true;
     try{
-      await waitReady();
       let job=load(LS.JOB,null);
-      const token=job?.token;
-      if(!job || !token || sessionStorage.getItem(SS.TOKEN)!==token){
-        localStorage.removeItem(LS.JOB); localStorage.removeItem(LS.STEP); running=false; return;
-      }
+      if(!job || !isOwner(job)) return;
+      if(!(await waitReady())){ blockJob('Report page not ready / assignment controls not found.'); return; }
 
       job.assignedCounts=job.assignedCounts||{};
       job.status=job.status||'running';
+      job.ownerHeartbeat=Date.now();
 
-      // restore step after navigation: always move NEXT, never same rep twice
-      const step=load(LS.STEP,null);
-      if(step && sessionStorage.getItem(SS.NAV)){
-        sessionStorage.removeItem(SS.NAV);
-        const idx = job.queue.findIndex(q=> String(q.id)===String(step.id));
-        if(idx>=0){
-          const node=job.queue[idx];
-          node.remaining = Math.max(0, node.remaining - (step.expected || 0));
-          job.assignedCounts[node.id]=Number(job.assignedCounts[node.id]||0)+Number(step.expected||0);
-          node.tries=0;
-          job.lastId = node.id;
-          if (job.idx < job.queue.length) job.idx++; // advance to next rep
-          save(LS.JOB,job);
+      // A submitted step is confirmed only when its exact lead IDs disappeared
+      // from the current "no admin" list. A reload alone is never proof.
+      if(getPendingStep(job)){
+        const result=reconcilePendingStep(job);
+        job=load(LS.JOB,null);
+        if(!job || !isOwner(job)) return;
+        updateProgress(job);
+        if(result==='confirmed'){
+          markCurrentPageAsCleanGet();
+          await sleep(250);
+          job=load(LS.JOB,null);
+          if(!job || !isOwner(job) || job.status!=='running') return;
+        } else {
+          return;
         }
-        localStorage.removeItem(LS.STEP);
       }
 
       updateProgress(job);
@@ -3967,73 +4609,150 @@ clearJobState();
       // Give the user a clear chance to Pause or Stop before the next rep.
       await sleep(1000);
       job=load(LS.JOB,null);
-      if(!job || !job.token || sessionStorage.getItem(SS.TOKEN)!==job.token) return;
+      if(!job || !isOwner(job)) return;
       if(job.status==='paused'){ updateProgress(job); return; }
+      if(job.status==='blocked'){ updateProgress(job); return; }
 
       // main loop
+      // Every path through this loop must either submit an Update (and return),
+      // finish, block, or strictly reduce the amount of work left. A hard
+      // iteration budget is kept as a last-resort backstop so a logic mistake
+      // can never freeze the tab again.
+      let guard=0;
       while(true){
-        if(!topIsNoAdmin()){ alert('Please set top filter "Processing Admin" to "-- no admin --".'); clearJobState(); hideProgress(); break; }
+        if(++guard > job.queue.length*4 + 50){
+          blockJob('Internal loop guard tripped.', 'The queue could not make progress. Use Recovery or stop the job.');
+          return;
+        }
+        await sleep(0); // yield to the browser so the UI stays responsive
 
-        // Skip done/skipped nodes
-        while(job.idx < job.queue.length && (job.queue[job.idx].remaining<=0 || job.queue[job.idx].remaining===Number.POSITIVE_INFINITY)){
-          job.idx++;
+        job=load(LS.JOB,null);
+        if(!job || !isOwner(job)) return;
+        if(job.status!=='running'){ updateProgress(job); return; }
+        job.lastEngineActivity=Date.now();
+        job.ownerHeartbeat=Date.now();
+        save(LS.JOB,job);
+        invalidateDomCache();
+        if(!topIsNoAdmin()){ blockJob('Top Processing Admin filter is not set to "-- no admin --".'); return; }
+
+        const needsWork=(q)=> q.remaining>0 && q.remaining!==Number.POSITIVE_INFINITY;
+        const pending=job.queue.filter(needsWork);
+        if(!pending.length) break; // every quota is filled
+
+        const available=getBoxes().length; // live count, never cached here
+        if(available<=0){
+          blockJob('No visible unassigned leads.', 'The live no-admin pool is empty or the report has not finished loading.');
+          return;
         }
 
-        // If reached end: check wrap-around need
-        if(job.idx >= job.queue.length){
-          const unfinished = job.queue.some(q => q.remaining > 0 && q.remaining !== Number.POSITIVE_INFINITY);
-          const available = getBoxes().length;
-          if(unfinished && available > 0){
-            job.idx = 0; // new round to finish exact quotas
-            save(LS.JOB, job);
-            continue;
-          } else {
-            break; // job finished
-          }
+        // Pick the next rep: forward from idx, then wrap. The previous version
+        // skipped a rep whenever it matched lastId, with no check that another
+        // candidate existed — when the last unfinished rep was also lastId the
+        // loop wrapped forever and locked up the page.
+        const order=[];
+        for(let i=job.idx;i<job.queue.length;i++) order.push(i);
+        for(let i=0;i<Math.min(job.idx,job.queue.length);i++) order.push(i);
+        const otherAvailable=pending.some(q=>String(q.id)!==String(job.lastId));
+        let chosen=-1;
+        for(const i of order){
+          const q=job.queue[i];
+          if(!needsWork(q)) continue;
+          // Avoid two consecutive batches for the same rep, but only when
+          // somebody else can actually take this turn.
+          if(otherAvailable && job.lastId && String(q.id)===String(job.lastId)) continue;
+          chosen=i; break;
         }
+        if(chosen<0) break; // nothing left that we are allowed to assign
 
-        // No consecutive batches to the same rep
-        if (job.lastId && String(job.queue[job.idx].id) === String(job.lastId)) {
-          job.idx++;
-          save(LS.JOB, job);
-          continue;
-        }
+        job.idx=chosen;
+        save(LS.JOB,job);
 
-        const node=job.queue[job.idx];
-        const available=getBoxes().length; if(available<=0) break;
+        const node=job.queue[chosen];
+        // Original behaviour, unchanged: each rep gets its full quota in one
+        // batch. perRep is fixed at start (floor(visible/reps) or the manual
+        // "Leads per rep" value), so 100 leads across 10 reps stays 10 each.
         const take=Math.min(node.remaining, available);
-        if (take <= 0) { job.idx++; save(LS.JOB,job); continue; }
+        if(take<=0){ node.remaining=0; save(LS.JOB,job); continue; }
 
         clearChecks();
-        const picked=job.randomMode ? pickRandom(take) : pickBottom(take);
-        if(!picked.length){ break; }
+        let picked=job.randomMode ? pickRandom(take) : pickBottom(take);
+
+        // The pool is measured, then the checkboxes are ticked. If Infinity
+        // repaints the table in between, fewer boxes than requested come back.
+        // The old code submitted the short batch anyway, which silently left
+        // the rep one or two leads short and forced an extra round. Recount
+        // once against the live DOM instead of submitting a partial batch.
+        if(picked.length<take){
+          clearChecks();
+          await sleep(600);
+          invalidateDomCache();
+          const liveAvailable=getBoxes().length;
+          const retryTake=Math.min(node.remaining,liveAvailable);
+          picked=job.randomMode ? pickRandom(retryTake) : pickBottom(retryTake);
+          if(picked.length<retryTake || !picked.length){
+            clearChecks();
+            blockJob(
+              'The lead list changed while leads were being selected.',
+              `Needed ${take} lead(s) for ${repName(job,node.id)}, but only ${picked.length} could be selected. Nothing was submitted. Reload the Pending report and press Resume.`
+            );
+            return;
+          }
+        }
+        if(!picked.length){ blockJob('No selectable visible leads found.'); return; }
         picked.forEach(cb=>cb.checked=true);
 
         if(!setAssignAdmin(node.id)){
-          node.tries++;
-          if(node.tries>=2){ node.remaining = Number.POSITIVE_INFINITY; job.idx++; }
-          save(LS.JOB, job);
-          continue;
+          blockJob('Processing Admin dropdown not found or representative could not be selected.'); return;
+        }
+        // Give the report's own change handlers a moment to settle, then
+        // re-read the dropdown before submitting. Without this, a same-tick
+        // click could go out while the underlying app still has the
+        // *previous* admin selected, silently assigning this batch to the
+        // wrong rep even though our own JS property looked correct.
+        await sleep(200);
+        const ddCheck=getAssignDD();
+        if(!ddCheck || String(ddCheck.value)!==String(node.id)){
+          clearChecks();
+          blockJob(
+            'The Processing Admin selection did not hold before Update.',
+            `Expected admin id ${node.id} (${repName(job,node.id)}) but the dropdown shows "${ddCheck?String(ddCheck.value):'(missing)'}" right before submit. Nothing was submitted — reload and press Resume.`
+          );
+          return;
         }
 
-        save(LS.STEP,{id:node.id, expected:picked.length, beforeCount:available, ts:Date.now()});
+        const selectedIds=picked.map(getBoxKey).filter(Boolean);
+        const pendingStep={
+          stepId:'step-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8),
+          id:node.id,
+          expected:picked.length,
+          beforeCount:available,
+          selectedIds,
+          ts:Date.now(),
+          verification:'submitted',
+          submitPageId:PAGE_ID
+        };
+        save(LS.STEP,pendingStep); job.pendingStep=pendingStep; job.lastEngineActivity=Date.now(); save(LS.JOB,job);
+        logEvent('submit',`${repName(job,node.id)}: ${picked.length} lead(s), pool ${available}, quota left ${node.remaining}`);
         sessionStorage.setItem(SS.NAV,'1');
 
         const btn=getUpdateBtn();
         if(!btn){
-          node.tries++;
-          if(node.tries>=2){ node.remaining = Number.POSITIVE_INFINITY; job.idx++; }
-          save(LS.JOB, job);
-          break;
+          sessionStorage.removeItem(SS.NAV);
+          localStorage.removeItem(LS.STEP); delete job.pendingStep; save(LS.JOB,job);
+          blockJob('Update button not found. Nothing was submitted.'); return;
         }
-        btn.click(); return; // wait for navigation/re-render
+        btn.click();
+        // A normal full POST destroys this document. If Infinity instead uses
+        // a same-page/partial refresh, the controller verifies it after a safe
+        // grace period and continues without user intervention.
+        return;
       }
 
       // Finish: summary modal
       if(job){
-        const assignedNames = names(job.queue.filter(q=>q.remaining===0).map(q=>q.id));
-        const skippedNames  = getSkippedNames(job);
         const details       = getAssignedDetails(job);
+        const assignedNames = details.map(x=>x.name);
+        const skippedNames  = getSkippedNames(job);
         const totalDone     = getAssignedTotal(job);
         const currentVisible = getBoxes().length;
 
@@ -4060,10 +4779,26 @@ clearJobState();
   function bindUI(){
     // refresh roster
     $('#sa-refresh').onclick = async ()=>{
-      $('#sa-refresh').disabled=true;
-      try{ await loadRoster(true); rebuildMaps(); }
-      finally{ $('#sa-refresh').disabled=false; }
+      const btn=$('#sa-refresh');
+      const originalLabel=btn.textContent;
+      btn.disabled=true;
+      // Visible feedback that the button is *working*, not just frozen — the
+      // CSV fetch can legitimately take a few seconds.
+      btn.textContent='Refreshing…';
+      updateWarn();
+      try{
+        await ensureRepresentativeMaps(true,15000);
+      } catch(err){
+        logEvent('roster','refresh failed: '+(err?.message||err));
+      } finally {
+        rosterLoading=false;
+        const b=$('#sa-refresh'); if(b){ b.disabled=false; b.textContent=originalLabel; }
+        syncControls();
+        updateWarn();
+      }
     };
+
+    $('#sa-use-cache').onclick = useLastWorkingRoster;
 
     // Random mode toggle
     $('#sa-random').onchange = ()=>{
@@ -4075,7 +4810,11 @@ clearJobState();
     // Job controls
     $('#sa-pause-job').onclick = pauseCurrentJob;
     $('#sa-resume-job').onclick = resumeCurrentJob;
+    $('#sa-confirm-step').onclick = markPendingAssigned;
+    $('#sa-retry-step').onclick = retryPendingStep;
+    $('#sa-takeover-job').onclick = takeOverCurrentJob;
     $('#sa-stop-job').onclick = ()=> stopCurrentJob(true);
+    $('#sa-copy-job').onclick = ()=> copyJobReport();
 
     // assign buttons (явное навешивание)
     $('#sa-day').onclick  = ()=> startJob('Day', roster.day);
@@ -4145,25 +4884,190 @@ clearJobState();
   }
 
   // ---------- boot ----------
-  async function boot(){
-    injectCSS(); buildPanel(); bindUI(); renderChips();
-    try{ await loadRoster(false);}catch{}
-    rebuildMaps();
+  let warnTimer=0;
 
-    const warn=$('#sa-warn');
-    const updateWarn=()=>{ warn.textContent = topIsNoAdmin() ? '' : 'Set Processing Admin = "-- no admin --"'; };
-    updateWarn();
-    const obs=new MutationObserver(updateWarn);
-    obs.observe(document.body,{childList:true,subtree:true});
-
-    const job=load(LS.JOB,null);
-    if(job && job.token && sessionStorage.getItem(SS.TOKEN)===job.token){
-      updateProgress(job);
-      if(job.status!=='paused') runJob();
-    }
-    else { clearJobState(); hideProgress(); }
+  // Single source of truth for the top-row controls. Driven by a timer, so a
+  // hung network request can no longer leave the buttons disabled forever.
+  function syncControls(){
+    if(load(LS.JOB,null)) return; // an active job owns the buttons
+    const noRoster=id2name.size===0;
+    setAssignButtonsDisabled(noRoster, noRoster ? 'Representatives are not loaded yet. Click Refresh or wait a moment.' : '');
   }
-  boot();
+
+  function updateWarn(){
+    const warn=$('#sa-warn'); if(!warn) return;
+    const offerRow=$('#sa-cache-offer-row');
+    const offerText=$('#sa-cache-offer-text');
+    if(startingJob) return;
+    let text='', color='', showOffer=false;
+    if(rosterLoading && id2name.size===0) text='Loading representatives…';
+    else if(cacheOffer){
+      // Live fetch failed or the sheet parsed to zero IDs (e.g. every
+      // DayIDs/LateIDs cell is "#N/A"). Nothing is auto-applied: Exclude/
+      // Choose/Assign all stay empty until the user explicitly opts into
+      // the cached copy via the button below, or the sheet is fixed.
+      text='⚠ Roster file is empty or missing data — no live representatives loaded. Fix the Google Sheet, or use the last working list below.';
+      color='#f59e0b';
+      const since=cacheOffer.ts ? new Date(cacheOffer.ts).toLocaleString() : 'an earlier load';
+      const count=uniq([...(cacheOffer.day||[]),...(cacheOffer.late||[])]).length;
+      if(offerText) offerText.textContent=`Cached list available from ${since} (${count} reps).`;
+      showOffer=true;
+    }
+    else if(rosterStale){
+      // The user explicitly chose to run on the cached list (via the button
+      // above). This clears itself automatically the moment a fresh, valid
+      // CSV load succeeds.
+      const since=rosterStaleSince ? new Date(rosterStaleSince).toLocaleString() : 'an earlier load';
+      text=`⚠ Using cached list from ${since} (chosen manually) — not live data.`;
+      color='#f59e0b';
+    }
+    else if(!topIsNoAdmin()) text='Set Processing Admin = "-- no admin --"';
+    else if(!load(LS.JOB,null) && id2name.size===0) text='Representatives are not loaded. Click Refresh.';
+    if(warn.textContent!==text) warn.textContent=text;
+    if(warn.style.color!==color) warn.style.color=color;
+    if(offerRow) offerRow.style.display=showOffer ? '' : 'none';
+    syncControls();
+  }
+
+  let booted=false;
+  async function boot(){
+    if(booted) return;
+    booted=true;
+    injectCSS(); buildPanel(); bindUI(); renderChips();
+
+    // The warning/button poll starts before anything is awaited. Previously the
+    // buttons were only re-enabled on the line after `await rosterPromise`, so
+    // a slow or hung CSV request left them disabled forever.
+    // A MutationObserver on document.body/subtree used to drive this. Writing
+    // the warning text is itself a mutation, so the observer re-triggered
+    // itself in a tight loop and each pass rescanned every <select> on the
+    // report. A slow poll that only writes on change is enough here.
+    clearInterval(warnTimer);
+    warnTimer=setInterval(updateWarn,1500);
+
+    // Render a saved job immediately. Recovery must not wait for the roster CSV.
+    let job=load(LS.JOB,null);
+    if(job) updateProgress(job);
+    else { hideProgress(); setAssignButtonsDisabled(true,'Loading representatives…'); }
+    updateWarn();
+
+    // Fire and forget: the roster load must never gate the rest of boot.
+    // No cache is ever applied automatically here — only a genuine live
+    // fetch populates the roster. If it fails or parses to zero IDs,
+    // Exclude/Choose/Assign correctly stay empty and updateWarn() surfaces
+    // the "Use last working list" button instead of silently substituting
+    // stale data.
+    ensureRepresentativeMaps(true,15000).then(()=>{
+      const current=load(LS.JOB,null);
+      if(current) updateProgress(current);
+      updateWarn();
+    }).catch(()=>{ rosterLoading=false; updateWarn(); });
+
+    job=load(LS.JOB,null);
+    if(!job){
+      hideProgress();
+      updateWarn();
+      return;
+    }
+
+    // Safe migration for a 2.1 job: only the tab carrying its old token may own it.
+    if(!job.ownerTabId && job.token && sessionStorage.getItem(SS.TOKEN)===job.token){
+      job.ownerTabId=TAB_ID; job.ownerHeartbeat=Date.now(); save(LS.JOB,job);
+    }
+    updateProgress(job);
+    if(!isOwner(job)) return; // read-only: never clear or run another tab's job
+
+    const step=getPendingStep(job);
+    if(step){
+      // At document-start the Auto Assign panel is already visible, but the LMS
+      // report controls may still be loading. Never classify that brief state
+      // as a failed Update.
+      const ready=await waitReady(15000);
+      if(!ready){
+        blockJob('The LMS did not load the normal Pending controls.', 'The assignment is saved. Open a clean Pending page and use Recovery; the last Update will not be repeated automatically.');
+        return;
+      }
+      reconciledOnThisPage.add(String(step.stepId||step.ts||'')+'@'+PAGE_ID);
+      invalidateDomCache();
+      const result=reconcilePendingStep(job);
+      job=load(LS.JOB,null);
+      if(job) updateProgress(job);
+      if(result==='confirmed'){
+        markCurrentPageAsCleanGet();
+        scheduleRun(100);
+      }
+      return;
+    }
+    if(job.status==='running') scheduleRun(50);
+  }
+
+  let controllerBusy=false;
+  const reconciledOnThisPage=new Set();
+  setInterval(()=>{
+    restorePanelIfNeeded();
+    const job=load(LS.JOB,null);
+    if(!job){ return; }
+    if(isOwner(job)){
+      job.ownerHeartbeat=Date.now(); save(LS.JOB,job);
+    }
+    updateProgress(job);
+
+    // Persistent controller: a running job is never left idle merely because
+    // a page lifecycle event or an Infinity partial refresh was missed.
+    if(!job || !isOwner(job) || controllerBusy) return;
+    const step=getPendingStep(job);
+    if(step){
+      // Once a step has been verified in this document and the answer was
+      // "blocked", the user has to decide. Re-running reconcile every 3s
+      // rescanned the whole report table forever and was the main reason a
+      // recovered page became unresponsive.
+      const stepKey=String(step.stepId||step.ts||'')+'@'+PAGE_ID;
+      if(reconciledOnThisPage.has(stepKey)) return;
+      const isNewDocument=String(step.submitPageId||'')!==PAGE_ID;
+      const samePageTimedOut=Date.now()-Number(step.ts||0)>=SAME_PAGE_VERIFY_MS;
+      if((isNewDocument||samePageTimedOut) && document.readyState!=='loading' && getAssignDD() && getUpdateBtn()){
+        controllerBusy=true;
+        reconciledOnThisPage.add(stepKey);
+        try{
+          invalidateDomCache();
+          const result=reconcilePendingStep(job);
+          const fresh=load(LS.JOB,null);
+          if(fresh) updateProgress(fresh);
+          if(result==='confirmed'){
+            markCurrentPageAsCleanGet();
+            scheduleRun(100);
+          }
+        } finally { controllerBusy=false; }
+      }
+      return;
+    }
+    if(job.status==='running' && !running) scheduleRun(50);
+  },HEARTBEAT_MS);
+
+  window.addEventListener('storage',(e)=>{
+    if(e.key!==LS.JOB && e.key!==LS.STEP) return;
+    const job=load(LS.JOB,null);
+    if(job) updateProgress(job); else hideProgress();
+  });
+  function startBoot(){
+    if(document.body){ boot(); return; }
+    const root=document.documentElement;
+    if(!root){ document.addEventListener('DOMContentLoaded',boot,{once:true}); return; }
+    const bodyObserver=new MutationObserver(()=>{
+      if(!document.body) return;
+      bodyObserver.disconnect();
+      boot();
+    });
+    bodyObserver.observe(root,{childList:true,subtree:true});
+    document.addEventListener('DOMContentLoaded',()=>{
+      bodyObserver.disconnect();
+      if(!$('#sa')) boot();
+    },{once:true});
+  }
+  startBoot();
+
+///////////////////////////////////
+
 
 //////////////////////////////////////// paste before this
   });
@@ -4178,9 +5082,7 @@ clearJobState();
   // Original source: tbw_assistant.js
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('tbwAssistant')) runScript('tbwAssistant', function () {
-const href = window.location.href.toLowerCase();
-
-  // Версия скрипта для попапа обновления
+  const href = window.location.href.toLowerCase();
 
   if (href.includes('customerdetails.aspx')) {
     if (document.readyState === 'loading') {
@@ -4195,6 +5097,9 @@ const href = window.location.href.toLowerCase();
       handleDenyPopup();
     }
   }
+
+
+
 
 
 
@@ -5147,9 +6052,6 @@ function handleReviewClick(canReviewFlag) {
   // ---------- CUSTOMER PAGE (TBW + NOTES) ----------
 
   function handleCustomerPage() {
-    // Попап про обновление версии — ОТКЛЮЧЁН в v1.0.6 (заменён модульным "What's new" popup)
-    // maybeShowVersionNotice();
-
     if (window.ccTbwHelperRan) return;
     window.ccTbwHelperRan = true;
 
@@ -5388,6 +6290,9 @@ function getCustomerIdFromPage() {
     if (lower.includes('unacceptable bank')) {
       return 'UNACCEPTABLE_BANK';
     }
+    if (/unacc\w*\s+state/i.test(lower)) {
+      return 'UNACCEPTABLE_STATE';
+    }
     if (lower.includes('not interested') || lower.includes('not interest')) {
       return 'NOT_INTERESTED';
     }
@@ -5427,7 +6332,8 @@ function getCustomerIdFromPage() {
         CANNOT_VERIFY_ONLINE_BANKING: /cannot\s+verify\s+online\s+banking/i,
         ACTIVE_LOAN_WITH_US:
           /(cust\s+has\s+an\s+active\s+loan\s+with\s+us|active\s+loan\s+with\s+us)/i,
-        UNACCEPTABLE_BANK: /unacceptable\s+bank/i
+        UNACCEPTABLE_BANK: /unacceptable\s+bank/i,
+        UNACCEPTABLE_STATE: /unacc\w*\s+state/i
       };
 
       const regex = regexMap[reasonCode];
