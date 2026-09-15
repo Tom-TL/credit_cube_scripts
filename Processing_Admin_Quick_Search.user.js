@@ -2,7 +2,7 @@
 // @name         Processing Admin Quick Search
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      2.5
+// @version      2.6
 // @description  Qucik admin search field next to Processing Admin
 // @match        *://apply.creditcube.com/plm.net/*CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
@@ -20,22 +20,22 @@
      CONFIG
   =============================================================== */
 
-  const ADMIN_BLACKLIST = new Set([
-    "ihor baa","igor ba","brian gonen","sean gonen","shahaf lavi","jerry mcfly","adam mcgee",
-    "liam moss portfolio","roman r","kyle samuel","mike stadnyk","alex vysotzky",
-    "jessica woods","nicole lennon","zhanna yakymenko","enrique martinez",
-    "helen o'riley","tim smith","trysha smith","stephanie bellar","yuliia b",
-    "teddy buckland","daisy clark","abby buentipo","leon collins","millie cross",
-    "kevin ericson","luna garcia","mark davidson","molly green","craig greenberg","randy felix",
-    "george c","mia crosswire","nadezhda k","chris turk","jacob james","max williams","melanie williams",
-    "-- corporate --","-- creditcube --","-- creditcube / creditcube --","-- creditcube / test store --",
-    "marketing m","test admin","aa bot","voicebot voiso","teststore user",
-    "true accord","ccg collections","rsc collections",
-    "iryna stadnyk_realstore","oleksii suprun_realstore","donald white_realstore",
-    "iryna stadnyk","oleksii suprun","donald white",
-    "viktoriia artomtseva","miguel gordon","yauhenia h","yurii holskyi","vitalii k",
-    "oleksandr pilyugin","alex voloshyn","raman vysotski"
-  ]);
+ const ADMIN_BLACKLIST = new Set([
+        "ihor baa","igor ba","brian gonen","sean gonen","shahaf lavi","jerry mcfly","adam mcgee",
+        "liam moss portfolio","roman r","kyle samuel","mike stadnyk","alex vysotzky",
+        "jessica woods","nicole lennon","zhanna yakymenko","enrique martinez",
+        "helen o'riley","tim smith","trysha smith","stephanie bellar","yuliia b",
+        "teddy buckland","daisy clark","abby buentipo","leon collins","millie cross",
+        "kevin ericson","luna garcia","mark davidson","molly green","craig greenberg","randy felix",
+        "george c","mia crosswire","nadezhda k","chris turk","jacob james","max williams","melanie williams",
+        "-- corporate --","-- creditcube --","-- creditcube / creditcube --","-- creditcube / test store --",
+        "marketing m","test admin","aa bot","voicebot voiso","teststore user",
+        "true accord","ccg collections","rsc collections",
+        "iryna stadnyk_realstore","oleksii suprun_realstore","donald white_realstore",
+        "iryna stadnyk","oleksii suprun","donald white",
+        "viktoriia artomtseva","miguel gordon","yauhenia h","yurii holskyi","vitalii k",
+        "oleksandr pilyugin","alex voloshyn","raman vysotski", "oleksandr bilokrynytskyi", "anthony smith", "yulia kalashnykov", "serhii bruh" 
+      ]);
 
   const HOST_ID   = 'cc-pa-host';
   const CSS_ID    = 'cc-pa-css';
