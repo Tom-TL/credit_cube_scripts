@@ -2,336 +2,498 @@
 // @name         Session Keeper
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.3
-// @description  Prevents auto-logout in Infinity LMS by sending keep-alive pings and simulating user activity.
+// @version      1.5
+// @description  Prevents auto-logout in Infinity LMS: disables the built-in SessionTimeout.js countdown, pings the real SessionKeepAlive endpoint and auto-clicks "I'm still here".
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Session_Keeper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Session_Keeper.user.js
+// @run-at       document-start
 // @grant        none
 // ==/UserScript==
 
+/* =================================================================
+   ЧТО ИСПРАВЛЕНО В 3.1
+
+   В 3.0 проверка "жива ли сессия" была слишком грубой: любой ответ
+   SessionKeepAlive.ashx кроме 2xx считался смертью сессии — отсюда
+   красная плашка на рабочей странице. Теперь:
+
+   • сессия считается мёртвой ТОЛЬКО если запрос реально редиректит
+     на LoginPage.aspx, и только после двух проверок подряд;
+   • если endpoint не принимает GET (404/405) — автоматически пробуем
+     POST и дальше используем рабочий метод;
+   • любой другой непонятный ответ = "не знаю", плашка не показывается,
+     в консоль идёт предупреждение;
+   • сама плашка переехала вниз справа (не перекрывает шапку) и её
+     можно закрыть крестиком.
+
+   Механика продления (из 3.0) не менялась:
+   1) подмена window.sessionTimeoutWarningMs до старта SessionTimeout.js
+   2) keep-alive на /plm.net/SessionKeepAlive.ashx каждые 4 минуты
+   3) автонажатие #sessionStillHereBtn
+   4) восстановление после окна "session expired"
+================================================================= */
 
 (function () {
   'use strict';
 
   /* -------------------------------------------------------------
-     🔧 НАСТРОЙКИ (менять можно только тут)
+     🔧 НАСТРОЙКИ
   -------------------------------------------------------------- */
 
-  // DEBUG_UI:
-  // false → кнопки вообще нет, скрипт тихо работает в фоне (stealth mode)
-  // true  → показывается красивая кнопка "Session: ON/OFF" снизу слева
-  const DEBUG_UI = true;  // ← если хочешь спрятать кнопку — поставь false
+  const DEBUG_UI   = false;  // ← кнопки/кружка нет вообще (stealth). true — вернуть кнопку.
+  const LABEL      = "Session";
 
-  // LABEL:
-  // Текст в кнопке. Можно заменить на "Active", "Keep", "Stay" и т.п.
-  const LABEL = "Session"; // кнопка будет "Session: ON" / "Session: OFF"
+  const KILL_SITE_TIMER  = true;  // глушить встроенный таймер (главное)
+  const AUTO_CLICK       = true;  // жать "I'm still here"
+  const ANTI_THROTTLE    = true;  // тихий звук против заморозки фоновой вкладки
+  const SHOW_DEAD_BANNER = true;  // плашка "сессия закрыта" (можно выключить)
 
+  const KEEPALIVE_EVERY_MS = 4 * 60 * 1000;
+  const WATCH_EVERY_MS     = 1000;
+
+  const VERBOSE = true;
 
   /* -------------------------------------------------------------
-     ДАЛЬШЕ — ЛОГИКА СКРИПТА (можно не трогать)
+     1) ГЛУШИМ ВСТРОЕННЫЙ ТАЙМЕР (до кода страницы)
   -------------------------------------------------------------- */
 
-  // Не запускать в iframe
-  if (window.top !== window.self) return;
+  const HUGE_MS = 2000000000; // ~23 дня; выше 2147483647 setTimeout переполнится
 
-  const path = location.pathname.toLowerCase();
-
-  // Цвета фона кнопки ON/OFF (примерно как на твоих скринах)
-  const COLOR_ON  = '#49D892';  // мягкий зелёный
-  const COLOR_OFF = '#7E8B8F';  // приглушённый серо-синий
-
-  // Ключи в localStorage
-  const STORAGE_ENABLED_KEY   = 'sessionKeeper_enabled_v4_1';   // ON/OFF
-  const STORAGE_COLLAPSED_KEY = 'sessionKeeper_collapsed_v4_1'; // свернуто/развернуто
-
-  // Интервалы
-  const PING_EVERY_MS      = 3 * 60 * 1000; // каждые 3 минуты — пинг на сервер
-  const FAKE_ACTIVITY_MS   = 60 * 1000;     // фейк-активность раз в минуту
-
-  let pingIntervalId = null;
-  let activityIntervalId = null;
-
-  // --- Определяем, попап ли это (где UI не нужен, но логика всё равно работает) ---
-  function isPopupWindow() {
-    const w = window.outerWidth || window.innerWidth;
-    const h = window.outerHeight || window.innerHeight;
-
-    const smallWindow = (w < 900 || h < 600);
-
-    const popupPath =
-      path.includes('customernotes')    ||
-      path.includes('customerfiles')    ||
-      path.includes('loanremarks')      ||
-      path.includes('loanstatus')       ||
-      path.includes('changeloanstatus') ||
-      path.includes('editloanremarks')  ||
-      path.includes('createpayment');   // здесь кнопку не показываем, чтобы не мешала
-
-    return smallWindow || popupPath;
-  }
-
-  const IS_POPUP = isPopupWindow();
-
-  // --- Чтение/запись состояния ON/OFF ---
-  function isEnabled() {
-    const saved = localStorage.getItem(STORAGE_ENABLED_KEY);
-    return saved === null ? true : saved === '1';
-  }
-  function setEnabled(v) {
-    localStorage.setItem(STORAGE_ENABLED_KEY, v ? '1' : '0');
-  }
-
-  // --- Чтение/запись состояния свернуто/развернуто ---
-  function isCollapsedStored() {
-    const saved = localStorage.getItem(STORAGE_COLLAPSED_KEY);
-    return saved === '1';
-  }
-  function setCollapsedStored(v) {
-    localStorage.setItem(STORAGE_COLLAPSED_KEY, v ? '1' : '0');
-  }
-
-  let isCollapsed = isCollapsedStored(); // свернуто ли UI (будет жить между перезагрузками)
-
-  // --- URL для пинга (текущая страница, кроме логина) ---
-  function getKeepAliveUrl() {
-    let url = window.location.href.split('#')[0];
-    if (url.toLowerCase().includes('login')) return null;
-    return url;
-  }
-
-  // --- ПИНГ СЕРВЕРА ---
-  function startPing() {
-    if (pingIntervalId !== null) return;
-
-    function doPing() {
-      const url = getKeepAliveUrl();
-      if (!url) return;
-
-      fetch(url, {
-        method: 'GET',
-        credentials: 'include',
-        cache: 'no-store',
-        headers: { 'X-Requested-With': 'XMLHttpRequest' }
-      })
-        .then(r => console.log(`[SessionKeeper] Ping → ${r.status}`, IS_POPUP ? '(popup)' : '(main)'))
-        .catch(e => console.warn('[SessionKeeper] Ping error:', e));
-    }
-
-    doPing();
-    pingIntervalId = setInterval(doPing, PING_EVERY_MS);
-  }
-
-  function stopPing() {
-    clearInterval(pingIntervalId);
-    pingIntervalId = null;
-  }
-
-  // --- ФЕЙКОВАЯ АКТИВНОСТЬ ---
-  function simulateUserActivity() {
+  function lockGlobal(name, value) {
     try {
-      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 5, clientY: 5 }));
-      document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Shift' }));
-
-      const input = document.querySelector('input, textarea');
-      if (input) input.dispatchEvent(new Event('input', { bubbles: true }));
-
-      console.log('[SessionKeeper] Fake activity');
+      let v = value;
+      Object.defineProperty(window, name, {
+        configurable: true,
+        get: function () { return v; },
+        set: function () { /* значение сайта игнорируем */ }
+      });
     } catch (e) {}
   }
 
-  function startFakeActivity() {
-    if (activityIntervalId !== null) return;
-    simulateUserActivity();
-    activityIntervalId = setInterval(simulateUserActivity, FAKE_ACTIVITY_MS);
-  }
-
-  function stopFakeActivity() {
-    clearInterval(activityIntervalId);
-    activityIntervalId = null;
+  if (KILL_SITE_TIMER) {
+    lockGlobal('sessionTimeoutWarningMs', HUGE_MS);
+    lockGlobal('sessionTimeoutCountdownSeconds', 86400);
+    lockGlobal('sessionTimeoutSoundUrl', '');
   }
 
   /* -------------------------------------------------------------
-     🎛️ КРАСИВАЯ КНОПКА (как на твоих макетах)
-     ▸ слева — объёмный кружочек
-     ▸ посередине — текст "Session: ON/OFF"
-     ▸ справа — белый треугольник "◀" для сворачивания
-     ▸ свернутое состояние + ON/OFF сохраняются в localStorage
+     ОБЩЕЕ
   -------------------------------------------------------------- */
 
-  function createToggle() {
-    // Если UI выключен или это попап — кнопку не рисуем, но логика всё равно работает
-    if (!DEBUG_UI) return;
-    if (IS_POPUP) return;
+  const IS_TOP = (window.top === window.self);
+  const path = location.pathname.toLowerCase();
 
+  const COLOR_ON   = '#49D892';
+  const COLOR_OFF  = '#7E8B8F';
+  const KEEPALIVE_URL = '/plm.net/SessionKeepAlive.ashx';
+  const LOGIN_URL     = '/plm.net/LoginPage.aspx';
+
+  const STORAGE_ENABLED_KEY   = 'sessionKeeper_enabled_v4_1';
+  const STORAGE_COLLAPSED_KEY = 'sessionKeeper_collapsed_v4_1';
+
+  let keepAliveId = null, watchId = null, heartbeatId = null;
+  let lastClickAt = 0, lastBeat = Date.now();
+  let kaMethod = 'GET';        // переключится на POST, если GET не принимают
+  let deadStreak = 0;          // сколько проверок подряд сказали "мертва"
+  let bannerDismissed = false;
+
+  const STATS = { ka: 0, kaLast: '-', saves: 0, saveLast: '-', state: '?' };
+
+  function log()  { if (VERBOSE) console.log.apply(console, ['[SessionKeeper]'].concat([].slice.call(arguments))); }
+  function warn() { console.warn.apply(console, ['[SessionKeeper]'].concat([].slice.call(arguments))); }
+
+  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function isEnabled() { const s = safeGet(STORAGE_ENABLED_KEY); return s === null ? true : s === '1'; }
+  function setEnabled(v) { safeSet(STORAGE_ENABLED_KEY, v ? '1' : '0'); }
+  let isCollapsed = safeGet(STORAGE_COLLAPSED_KEY) === '1';
+
+  function isPopupWindow() {
+    const w = window.outerWidth || window.innerWidth;
+    const h = window.outerHeight || window.innerHeight;
+    return (w < 900 || h < 600) ||
+      path.includes('customernotes')    || path.includes('customerfiles')  ||
+      path.includes('loanremarks')      || path.includes('loanstatus')     ||
+      path.includes('changeloanstatus') || path.includes('editloanremarks')||
+      path.includes('createpayment');
+  }
+  const IS_POPUP = isPopupWindow();
+
+  /* -------------------------------------------------------------
+     2) KEEP-ALIVE — ОСТОРОЖНАЯ ВЕРСИЯ
+     Возвращает промис со строкой: 'alive' | 'dead' | 'unknown'
+  -------------------------------------------------------------- */
+
+  function looksLikeLogin(url) {
+    if (!url) return false;
+    const u = url.toLowerCase();
+    return u.indexOf('loginpage.aspx') !== -1 ||
+           u.indexOf('/login') !== -1 ||
+           u.indexOf('logout.ashx') !== -1;
+  }
+
+  function rawPing(method) {
+    return fetch(KEEPALIVE_URL, {
+      method: method,
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+  }
+
+  function keepAlive(reason) {
+    return rawPing(kaMethod).then(function (r) {
+      // Метод не подошёл — пробуем второй и запоминаем рабочий
+      if ((r.status === 404 || r.status === 405) && kaMethod === 'GET') {
+        log('GET не принят (' + r.status + '), пробую POST');
+        kaMethod = 'POST';
+        return rawPing('POST');
+      }
+      return r;
+    }).then(function (r) {
+      STATS.ka++;
+      STATS.kaLast = r.status + '';
+
+      // МЁРТВОЙ считаем только явный редирект на страницу входа
+      if (looksLikeLogin(r.url) || (r.redirected && looksLikeLogin(r.url))) {
+        deadStreak++;
+        STATS.state = 'dead?';
+        warn('KeepAlive увёл на страницу входа (' + r.status + '), подряд: ' + deadStreak);
+        if (deadStreak >= 2) { STATS.state = 'dead'; showDeadBanner(); }
+        return 'dead';
+      }
+
+      if (r.ok) {
+        deadStreak = 0;
+        STATS.state = 'alive';
+        hideDeadBanner();
+        log('KeepAlive →', r.status, kaMethod, reason || '');
+        return 'alive';
+      }
+
+      // Любой другой код — не повод объявлять логаут
+      deadStreak = 0;
+      STATS.state = 'unknown';
+      warn('KeepAlive вернул ' + r.status + ' (' + kaMethod + '). ' +
+           'Сессию мёртвой не считаю. Если так каждый раз — проверь endpoint: ' + KEEPALIVE_URL);
+      return 'unknown';
+    }).catch(function (e) {
+      STATS.kaLast = 'ERR';
+      STATS.state = 'unknown';
+      warn('KeepAlive error:', e);
+      return 'unknown';
+    });
+  }
+
+  function startKeepAlive() {
+    if (keepAliveId !== null) return;
+    keepAlive('start');
+    keepAliveId = setInterval(function () { keepAlive('interval'); }, KEEPALIVE_EVERY_MS);
+  }
+  function stopKeepAlive() { clearInterval(keepAliveId); keepAliveId = null; }
+
+  /* -------------------------------------------------------------
+     3) + 4) СЛЕДИМ ЗА ИХ ОКНОМ
+  -------------------------------------------------------------- */
+
+  function visible(el) {
+    if (!el) return false;
+    try {
+      if (el.offsetParent !== null) return true;
+      const cs = getComputedStyle(el);
+      return cs.display !== 'none' && cs.visibility !== 'hidden';
+    } catch (e) { return false; }
+  }
+
+  function clickHard(el) {
+    const o = { bubbles: true, cancelable: true, view: window, button: 0 };
+    try { if (window.PointerEvent) el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', o)); } catch (e) {}
+    try { el.click(); } catch (e) { try { el.dispatchEvent(new MouseEvent('click', o)); } catch (e2) {} }
+  }
+
+  function checkOverlay() {
+    if (!AUTO_CLICK || !isEnabled()) return;
+    if (Date.now() - lastClickAt < 3000) return;
+
+    const ov    = document.getElementById('sessionTimeoutOverlay');
+    const btn   = document.getElementById('sessionStillHereBtn');
+    const login = document.getElementById('sessionLoginBtn');
+
+    if (ov && visible(ov)) {
+      // Состояние "уже вылогинило"
+      if (login && visible(login) && (!btn || !visible(btn))) {
+        lastClickAt = Date.now();
+        warn('Окно "session expired". Проверяю сессию на сервере...');
+        keepAlive('recover').then(function (state) {
+          if (state === 'alive' || state === 'unknown') {
+            try { ov.style.display = 'none'; } catch (e) {}
+            STATS.saves++; STATS.saveLast = new Date().toLocaleTimeString();
+            console.log('%c[SessionKeeper] Сессия отвечает — окно убрано, работаем дальше.',
+                        'color:#10b86a;font-weight:bold');
+            flashUI();
+          } else {
+            warn('Сессия действительно закрыта — нужен повторный вход.');
+          }
+        });
+        return;
+      }
+
+      // Обычное предупреждение
+      if (btn && visible(btn)) {
+        lastClickAt = Date.now();
+        clickHard(btn);
+        STATS.saves++; STATS.saveLast = new Date().toLocaleTimeString();
+        console.log('%c[SessionKeeper] Нажал "I\'m still here" — сессия продлена.',
+                    'color:#10b86a;font-weight:bold');
+        flashUI();
+        setTimeout(function () { keepAlive('after-click'); }, 500);
+        return;
+      }
+    }
+
+    genericFallback();
+  }
+
+  const STRICT = [/i.?\s*m\s+still\s+here/i, /still\s+here/i, /stay\s+(logged|signed)\s+in/i, /extend\s+(my\s+)?session/i];
+  function genericFallback() {
+    let nodes;
+    try { nodes = document.querySelectorAll('button, input[type=button], input[type=submit], a, [role=button]'); }
+    catch (e) { return; }
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (!visible(el)) continue;
+      const t = ((el.innerText || el.textContent || '') + ' ' + (el.value || '')).replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 40) continue;
+      for (let j = 0; j < STRICT.length; j++) {
+        if (STRICT[j].test(t)) {
+          lastClickAt = Date.now();
+          clickHard(el);
+          STATS.saves++; STATS.saveLast = new Date().toLocaleTimeString();
+          console.log('%c[SessionKeeper] Продлил сессию → "' + t + '"', 'color:#10b86a;font-weight:bold');
+          flashUI();
+          return;
+        }
+      }
+    }
+  }
+
+  function startWatcher() {
+    if (watchId !== null) return;
+    watchId = setInterval(checkOverlay, WATCH_EVERY_MS);
+    function observe() {
+      const ov = document.getElementById('sessionTimeoutOverlay');
+      if (!ov || ov.__skObs) return;
+      ov.__skObs = true;
+      try {
+        new MutationObserver(function () { setTimeout(checkOverlay, 60); })
+          .observe(ov, { attributes: true, attributeFilter: ['style', 'class'], childList: true, subtree: true });
+      } catch (e) {}
+    }
+    observe();
+    setTimeout(observe, 2000);
+  }
+  function stopWatcher() { clearInterval(watchId); watchId = null; }
+
+  /* -------------------------------------------------------------
+     ДЕТЕКТОР СНА / ЗАМОРОЗКИ
+  -------------------------------------------------------------- */
+
+  function startHeartbeat() {
+    if (heartbeatId !== null) return;
+    lastBeat = Date.now();
+    heartbeatId = setInterval(function () {
+      const now = Date.now(), gap = now - lastBeat;
+      lastBeat = now;
+      if (gap > 90 * 1000) {
+        warn('Обнаружен разрыв ' + Math.round(gap / 1000) + ' сек ' +
+             '(сон ноутбука / заморозка вкладки / потеря сети). Проверяю сессию...');
+        keepAlive('after-gap');
+        checkOverlay();
+      }
+    }, 10 * 1000);
+  }
+
+  /* -------------------------------------------------------------
+     АНТИ-ЗАМОРОЗКА: тихий звук
+  -------------------------------------------------------------- */
+
+  function silentWavUri(seconds) {
+    const rate = 8000, n = rate * seconds, bytes = 44 + n * 2;
+    const buf = new ArrayBuffer(bytes), v = new DataView(buf);
+    function str(o, s) { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); v.setUint32(4, bytes - 8, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin(i * 0.05) * 6), true);
+    let bin = '';
+    const u8 = new Uint8Array(buf);
+    for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+    return 'data:audio/wav;base64,' + btoa(bin);
+  }
+
+  function startAntiThrottle() {
+    if (!ANTI_THROTTLE || !IS_TOP || IS_POPUP) return;
+    let audio;
+    try { audio = new Audio(silentWavUri(2)); audio.loop = true; audio.volume = 1; }
+    catch (e) { return; }
+    function tryPlay() {
+      audio.play().then(function () { log('Анти-заморозка: тихий звук включён'); })
+                  .catch(function () {});
+    }
+    tryPlay();
+    ['click', 'keydown', 'mousedown'].forEach(function (ev) {
+      document.addEventListener(ev, function once() {
+        document.removeEventListener(ev, once, true);
+        tryPlay();
+      }, true);
+    });
+  }
+
+  /* -------------------------------------------------------------
+     ПЛАШКА "СЕССИЯ ЗАКРЫТА" — внизу справа, с крестиком
+  -------------------------------------------------------------- */
+
+  function showDeadBanner() {
+    if (!SHOW_DEAD_BANNER || bannerDismissed) return;
+    if (!IS_TOP || !document.body) return;
+    if (document.getElementById('session-keeper-dead')) return;
+
+    const d = document.createElement('div');
+    d.id = 'session-keeper-dead';
+    Object.assign(d.style, {
+      position: 'fixed', bottom: '46px', right: '14px', padding: '10px 14px',
+      background: '#d23f3f', color: '#fff', fontFamily: 'Segoe UI, Arial, sans-serif',
+      fontSize: '12px', fontWeight: '700', borderRadius: '6px',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.3)', zIndex: 2147483647, maxWidth: '280px'
+    });
+
+    const txt = document.createElement('span');
+    txt.textContent = 'Сессия закрыта на сервере. ';
+    const a = document.createElement('a');
+    a.href = LOGIN_URL; a.textContent = 'Войти';
+    a.style.color = '#fff'; a.style.textDecoration = 'underline';
+    const x = document.createElement('span');
+    x.textContent = '✕';
+    Object.assign(x.style, { marginLeft: '10px', cursor: 'pointer', opacity: '0.85' });
+    x.addEventListener('click', function () { bannerDismissed = true; hideDeadBanner(); });
+
+    d.appendChild(txt); d.appendChild(a); d.appendChild(x);
+    document.body.appendChild(d);
+  }
+
+  function hideDeadBanner() {
+    const d = document.getElementById('session-keeper-dead');
+    if (d && d.parentNode) d.parentNode.removeChild(d);
+  }
+
+  /* -------------------------------------------------------------
+     🎛️ КНОПКА
+  -------------------------------------------------------------- */
+
+  let flashUI = function () {};
+
+  function createToggle() {
+    if (!DEBUG_UI || !IS_TOP || IS_POPUP || !document.body) return;
     if (document.getElementById('session-keeper-toggle')) return;
 
     const btn = document.createElement('div');
     btn.id = 'session-keeper-toggle';
+    const dot = document.createElement('span');
+    const txt = document.createElement('span');
+    const arr = document.createElement('span');
+    btn.appendChild(dot); btn.appendChild(txt); btn.appendChild(arr);
 
-    const dotSpan   = document.createElement('span'); // круг слева
-    const textSpan  = document.createElement('span'); // "Session: ON/OFF"
-    const arrowSpan = document.createElement('span'); // белый треугольник ◀
-
-    btn.appendChild(dotSpan);
-    btn.appendChild(textSpan);
-    btn.appendChild(arrowSpan);
-
-    // --- Базовый стиль всей кнопки (капсула) ---
     Object.assign(btn.style, {
-      position: 'fixed',
-      bottom: '10px',
-      left: '10px',
-      padding: '4px 12px',
-      background: isEnabled() ? COLOR_ON : COLOR_OFF,
-      color: '#ffffff',
-      fontSize: '11px',
-      fontWeight: '700',
-      fontFamily: 'Segoe UI, Arial, sans-serif',
-      borderRadius: '999px',
-      cursor: 'pointer',
-      zIndex: 99999,
-      userSelect: 'none',
-      boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '6px',
-      transition: 'background 0.2s ease, transform 0.1s ease, box-shadow 0.1s ease'
+      position: 'fixed', bottom: '10px', left: '10px', padding: '4px 12px',
+      background: isEnabled() ? COLOR_ON : COLOR_OFF, color: '#fff',
+      fontSize: '11px', fontWeight: '700', fontFamily: 'Segoe UI, Arial, sans-serif',
+      borderRadius: '999px', cursor: 'pointer', zIndex: 2147483646, userSelect: 'none',
+      boxShadow: '0 4px 10px rgba(0,0,0,0.25)', display: 'inline-flex', alignItems: 'center',
+      gap: '6px', transition: 'background .2s ease, transform .1s ease, box-shadow .1s ease'
+    });
+    btn.addEventListener('mousedown', function () {
+      btn.style.transform = 'translateY(1px)'; btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.25)';
+    });
+    btn.addEventListener('mouseup', function () {
+      btn.style.transform = 'translateY(0)'; btn.style.boxShadow = '0 4px 10px rgba(0,0,0,0.25)';
     });
 
-    btn.addEventListener('mousedown', () => {
-      btn.style.transform = 'translateY(1px)';
-      btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.25)';
+    Object.assign(dot.style, {
+      display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.3)', flexShrink: '0'
     });
-    btn.addEventListener('mouseup', () => {
-      btn.style.transform = 'translateY(0)';
-      btn.style.boxShadow = '0 4px 10px rgba(0,0,0,0.25)';
-    });
-
-    // --- Кружочек слева (объёмный) ---
-    Object.assign(dotSpan.style, {
-      display: 'inline-block',
-      width: '12px',
-      height: '12px',
-      borderRadius: '50%',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-      flexShrink: '0'
+    Object.assign(txt.style, { whiteSpace: 'nowrap' });
+    arr.textContent = '◀';
+    Object.assign(arr.style, {
+      marginLeft: '4px', fontSize: '11px', fontWeight: '700', color: '#fff',
+      flexShrink: '0', opacity: '0.95'
     });
 
-    // --- Текст "Session: ON/OFF" ---
-    Object.assign(textSpan.style, {
-      whiteSpace: 'nowrap'
-    });
-
-    // --- Стрелка ◀ для сворачивания ---
-    arrowSpan.textContent = '◀';
-    Object.assign(arrowSpan.style, {
-      marginLeft: '4px',
-      fontSize: '11px',
-      fontWeight: '700',
-      color: '#ffffff',
-      flexShrink: '0',
-      opacity: '0.95'
-    });
-
-
-
-
-
-    // Обновление внешнего вида в зависимости от состояния
-      function updateButtonAppearance() {
-      const enabled = isEnabled();
-
-      // Цвет фона кнопки
-      btn.style.background = enabled ? COLOR_ON : COLOR_OFF;
-
-      // Градиент для кружочка
-      if (enabled) {
-        dotSpan.style.background =
-          'radial-gradient(circle at 30% 30%, #d6ffe9, #10b86a)';
-      } else {
-        dotSpan.style.background =
-          'radial-gradient(circle at 30% 30%, #f2e9ff, #b89cff)';
-      }
-
+    function paint() {
+      const on = isEnabled();
+      btn.style.background = on ? COLOR_ON : COLOR_OFF;
+      btn.title = 'Session Keeper v3.2' +
+                  '\nKeep-alive: ' + STATS.ka + ' (' + kaMethod + ', последний: ' + STATS.kaLast + ')' +
+                  '\nСостояние сессии: ' + STATS.state +
+                  '\nАвтопродлений: ' + STATS.saves + ' (последнее: ' + STATS.saveLast + ')' +
+                  '\nВстроенный таймер: ' + (KILL_SITE_TIMER ? 'отключён' : 'активен');
+      dot.style.background = on
+        ? 'radial-gradient(circle at 30% 30%, #d6ffe9, #10b86a)'
+        : 'radial-gradient(circle at 30% 30%, #f2e9ff, #b89cff)';
       if (isCollapsed) {
-        // 🔹 СВЕРНУТО:
-        //  - показываем только кружок
-        //  - центрируем его по капсуле
-        //  - убираем любые отступы/гапы справа
-        textSpan.textContent = '';
-        arrowSpan.style.display = 'none';
-
-        btn.style.padding = '4px 8px';
-        btn.style.justifyContent = 'center'; // кружок по центру
-        btn.style.gap = '0px';
+        txt.textContent = ''; arr.style.display = 'none';
+        btn.style.padding = '4px 8px'; btn.style.justifyContent = 'center'; btn.style.gap = '0px';
       } else {
-        // 🔹 РАЗВЕРНУТО:
-        //  - кружок + текст "Session: ON/OFF" + стрелка ◀
-        textSpan.textContent = enabled ? `${LABEL}: ON` : `${LABEL}: OFF`;
-        arrowSpan.style.display = 'inline';
-
-        btn.style.padding = '4px 12px';
-        btn.style.justifyContent = 'flex-start'; // обычное выравнивание слева
-        btn.style.gap = '6px';
+        txt.textContent = on ? LABEL + ': ON' : LABEL + ': OFF';
+        arr.style.display = 'inline';
+        btn.style.padding = '4px 12px'; btn.style.justifyContent = 'flex-start'; btn.style.gap = '6px';
       }
     }
 
-
-
-
-
-
-    // Клик по кнопке:
-    //  - если свернуто → только разворачиваем, состояние ON/OFF не меняем
-    //  - если развернуто → переключаем ON/OFF
-    btn.addEventListener('click', () => {
-      if (isCollapsed) {
-        isCollapsed = false;
-        setCollapsedStored(false);
-        updateButtonAppearance();
-        return;
-      }
-
-      const newState = !isEnabled();
-      setEnabled(newState);
-
-      if (newState) {
-        startPing();
-        startFakeActivity();
-      } else {
-        stopPing();
-        stopFakeActivity();
-      }
-
-      updateButtonAppearance();
+    btn.addEventListener('click', function () {
+      if (isCollapsed) { isCollapsed = false; safeSet(STORAGE_COLLAPSED_KEY, '0'); paint(); return; }
+      const on = !isEnabled();
+      setEnabled(on);
+      if (on) { startKeepAlive(); startWatcher(); } else { stopKeepAlive(); stopWatcher(); }
+      paint();
+    });
+    arr.addEventListener('click', function (e) {
+      e.stopPropagation(); isCollapsed = true; safeSet(STORAGE_COLLAPSED_KEY, '1'); paint();
     });
 
-    // Отдельный клик по стрелке ◀ — только сворачивает, не меняя ON/OFF
-    arrowSpan.addEventListener('click', (e) => {
-      e.stopPropagation(); // чтобы не сработал общий click по кнопке
-      isCollapsed = true;
-      setCollapsedStored(true);
-      updateButtonAppearance();
-    });
+    flashUI = function () {
+      try { btn.style.background = '#2f80ed'; setTimeout(paint, 900); } catch (e) {}
+    };
 
-    // Стартовый вид
-    updateButtonAppearance();
-
+    paint();
+    setInterval(paint, 5000);
     document.body.appendChild(btn);
   }
 
   /* -------------------------------------------------------------
-     🚀 ИНИЦИАЛИЗАЦИЯ СКРИПТА
+     🚀 СТАРТ
   -------------------------------------------------------------- */
 
   function init() {
     createToggle();
-
     if (isEnabled()) {
-      startPing();
-      startFakeActivity();
+      startKeepAlive();
+      startWatcher();
+      startHeartbeat();
+      startAntiThrottle();
     }
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && isEnabled()) { checkOverlay(); keepAlive('visible'); }
+    });
+    window.addEventListener('focus', function () { if (isEnabled()) checkOverlay(); });
+    window.addEventListener('online', function () { if (isEnabled()) keepAlive('online'); });
+
+    log('v3.2 started', IS_TOP ? '(main)' : '(frame)',
+        '| таймер сайта:', KILL_SITE_TIMER ? 'отключён' : 'активен');
   }
 
   if (document.readyState === 'loading') {
@@ -341,3 +503,18 @@
   }
 
 })();
+
+/* =================================================================
+   ПРОВЕРКА (F12 → Console)
+
+   1. window.sessionTimeoutWarningMs   → должно быть 2000000000
+   2. Что реально отвечает endpoint:
+        fetch('/plm.net/SessionKeepAlive.ashx', {credentials:'include'})
+          .then(r => console.log(r.status, r.url, r.redirected));
+      • 200 и тот же URL  → всё хорошо
+      • 404/405           → скрипт сам переключится на POST
+      • редирект на LoginPage.aspx → сессия правда закрыта
+      Скинь мне этот вывод, если что-то ведёт себя странно.
+   3. Тест окна:  $('#sessionTimeoutOverlay').show()
+      → в течение секунды зелёная строка "Нажал I'm still here".
+================================================================= */
