@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2.7
+// @version      1.2.8
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,8 +82,12 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.2.6';
+  const SCRIPT_VERSION = '1.2.8';
   const CHANGELOG = [
+
+    { version: '1.2.8', date: '09/16/2026', changes: [
+        { script: 'Auto-Assign', text: 'Fixed: while a job was running, the progress window appeared on every LMS page (customer details, etc.). The panel is now strictly limited to the Pending Loans report; other report tabs still show the "running in another tab" status.' },
+    ]},
 
     { version: '1.2.6', date: '09/10/2026', changes: [
         { script: 'Auto-Assign', text: 'Updated to standalone v2.3 logic: more stable roster loading, verified updates, safer recovery, hang-free engine, and clearer button feedback.' },
@@ -3643,10 +3647,17 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
     return;
   }
 
-  // Only on Pending Loans
+  // Only on the Pending Loans report page. This is a hard gate: no matter what
+  // a saved job says, the panel must never appear on customer pages or on any
+  // other LMS screen. The bundle itself runs on all of /plm.net/, so this check
+  // is what keeps the Auto Assign UI confined to the report.
+  const ON_LOANS_REPORT = /\/plm\.net\/reports\/LoansReport\.aspx$/i.test(location.pathname);
+  if (!ON_LOANS_REPORT) return;
+
   const usp = new URLSearchParams(location.search);
   // Infinity can occasionally drop the reportpreset query after a POST. An
-  // existing job must still boot so its progress and recovery are not lost.
+  // existing job must still boot so its progress and recovery are not lost —
+  // but only while we are still on the Pending Loans report itself.
   const hasSavedJobAtBoot=!!localStorage.getItem('sa:job');
   if (usp.get('reportpreset') !== 'pending' && !hasSavedJobAtBoot) return;
 
