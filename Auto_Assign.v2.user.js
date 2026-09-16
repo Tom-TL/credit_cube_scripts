@@ -2,9 +2,9 @@
 // @name         Auto-Assign 2.3
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      2.3
+// @version      2.3.1
 // @description  Persistent Auto Assign with stable roster loading, verified updates, safe recovery, hang-free engine, and clearer button feedback.
-// @match        https://apply.creditcube.com/plm.net/reports/*
+// @match        https://apply.creditcube.com/plm.net/reports/LoansReport.aspx*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Auto_Assign.v2.user.js
 // @downloadURL  https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Auto_Assign.v2.user.js
 // @run-at       document-start
@@ -28,10 +28,17 @@
     return;
   }
 
-  // Only on Pending Loans
+  // Only on the Pending Loans report page. This is a hard gate: no matter what
+  // a saved job says, the panel must never appear on customer pages or on any
+  // other LMS screen. The @match above already limits this, but the check is
+  // repeated here so a stale or broader install cannot leak the UI elsewhere.
+  const ON_LOANS_REPORT = /\/plm\.net\/reports\/LoansReport\.aspx$/i.test(location.pathname);
+  if (!ON_LOANS_REPORT) return;
+
   const usp = new URLSearchParams(location.search);
   // Infinity can occasionally drop the reportpreset query after a POST. An
-  // existing job must still boot so its progress and recovery are not lost.
+  // existing job must still boot so its progress and recovery are not lost —
+  // but only while we are still on the Pending Loans report itself.
   const hasSavedJobAtBoot=!!localStorage.getItem('sa:job');
   if (usp.get('reportpreset') !== 'pending' && !hasSavedJobAtBoot) return;
 
