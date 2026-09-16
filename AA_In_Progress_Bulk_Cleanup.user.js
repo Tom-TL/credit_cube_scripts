@@ -2,7 +2,7 @@
 // @name         AA In Progress Bulk Cleanup
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      2.5
+// @version      2.6
 // @description  Removes "AA In Progress" status for ALL loans in Pending report via background POST to EditStatus.aspx, optionally reassigning Processing Admin from "AA Bot" to "-- no admin --" (no tabs/popups, no page reload).
 // @match        https://apply.creditcube.com/plm.net/reports/LoansReport.aspx*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/AA_In_Progress_Bulk_Cleanup.user.js
