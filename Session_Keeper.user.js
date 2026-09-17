@@ -2,7 +2,7 @@
 // @name         Session Keeper
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.5
+// @version      1.6
 // @description  Prevents auto-logout in Infinity LMS: disables the built-in SessionTimeout.js countdown, pings the real SessionKeepAlive endpoint and auto-clicks "I'm still here".
 // @match        http*://*/plm.net/*
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Session_Keeper.user.js
@@ -12,6 +12,19 @@
 // ==/UserScript==
 
 /* =================================================================
+
+   Раньше звук глушился только обнулением window.sessionTimeoutSoundUrl.
+   Это работает, ТОЛЬКО если сайт читает эту переменную. Если путь к mp3
+   зашит в коде или <audio> лежит прямо в разметке — звук всё равно играл.
+
+   Теперь блокируется сам факт воспроизведения:
+   • патчится HTMLMediaElement.prototype.play() — звук с "подозрительным"
+     именем (beep/warning/session/timeout/...) не проигрывается вообще;
+   • существующие <audio>/<video> глушатся (muted + volume 0);
+   • MutationObserver ловит элементы, добавленные позже.
+   Наш собственный тихий wav (анти-заморозка вкладки) помечен флагом
+   и под блокировку не попадает.
+
    ЧТО ИСПРАВЛЕНО В 3.1
 
    В 3.0 проверка "жива ли сессия" была слишком грубой: любой ответ
@@ -45,6 +58,7 @@
   const LABEL      = "Session";
 
   const KILL_SITE_TIMER  = true;  // глушить встроенный таймер (главное)
+  const MUTE_SITE_SOUND  = true;  // жёстко глушить звук предупреждения (не только через переменную)
   const AUTO_CLICK       = true;  // жать "I'm still here"
   const ANTI_THROTTLE    = true;  // тихий звук против заморозки фоновой вкладки
   const SHOW_DEAD_BANNER = true;  // плашка "сессия закрыта" (можно выключить)
@@ -78,6 +92,70 @@
   }
 
   /* -------------------------------------------------------------
+     1b) ЖЁСТКАЯ БЛОКИРОВКА ЗВУКА
+
+     Обнуления sessionTimeoutSoundUrl мало: сайт может зашить путь
+     к mp3 прямо в коде или держать <audio> в разметке. Поэтому
+     перехватываем сам момент воспроизведения.
+  -------------------------------------------------------------- */
+
+  const OUR_AUDIO_FLAG = '__sessionKeeperSilent';
+  const BAD_SOUND_RE = /beep|warn|alert|timeout|session|chime|notify|expire/i;
+
+  function isBlockedSound(el) {
+    try {
+      if (el && el[OUR_AUDIO_FLAG]) return false;          // наш тихий wav — не трогаем
+      const src = (el && (el.currentSrc || el.src)) || '';
+      if (!src) return false;
+      if (src.indexOf('data:') === 0) return false;        // наш анти-throttle
+      return BAD_SOUND_RE.test(src);
+    } catch (e) { return false; }
+  }
+
+  function muteSiteSound() {
+    if (!MUTE_SITE_SOUND) return;
+
+    // 1. перехват play() у любого <audio>/<video>
+    try {
+      const proto = window.HTMLMediaElement && HTMLMediaElement.prototype;
+      if (proto && !proto.__sessionKeeperPatched) {
+        const origPlay = proto.play;
+        proto.play = function () {
+          if (isBlockedSound(this)) {
+            log('Звук сайта заблокирован: ' + (this.currentSrc || this.src));
+            try { this.pause(); this.muted = true; this.volume = 0; } catch (e) {}
+            return Promise.resolve();
+          }
+          return origPlay.apply(this, arguments);
+        };
+        proto.__sessionKeeperPatched = true;
+      }
+    } catch (e) {}
+
+    // 2. глушим уже существующие в разметке <audio>
+    function sweep() {
+      try {
+        document.querySelectorAll('audio, video').forEach(function (el) {
+          if (isBlockedSound(el)) {
+            try { el.pause(); el.muted = true; el.volume = 0; el.autoplay = false; } catch (e) {}
+          }
+        });
+      } catch (e) {}
+    }
+    sweep();
+    document.addEventListener('DOMContentLoaded', sweep);
+
+    // 3. ловим динамически добавленные элементы
+    try {
+      new MutationObserver(sweep).observe(document.documentElement, {
+        childList: true, subtree: true
+      });
+    } catch (e) {}
+  }
+
+  muteSiteSound();
+
+  /* -------------------------------------------------------------
      ОБЩЕЕ
   -------------------------------------------------------------- */
 
@@ -96,6 +174,7 @@
   let lastClickAt = 0, lastBeat = Date.now();
   let kaMethod = 'GET';        // переключится на POST, если GET не принимают
   let deadStreak = 0;          // сколько проверок подряд сказали "мертва"
+  let netFails = 0;            // сколько запросов подряд не дошли (VPN/сеть)
   let bannerDismissed = false;
 
   const STATS = { ka: 0, kaLast: '-', saves: 0, saveLast: '-', state: '?' };
@@ -168,6 +247,12 @@
         deadStreak = 0;
         STATS.state = 'alive';
         hideDeadBanner();
+        if (netFails > 0) {   // связь вернулась — сразу пробуем закрыть окно
+          netFails = 0;
+          hideNetBanner();
+          log('Связь восстановлена');
+          setTimeout(checkOverlay, 100);
+        }
         log('KeepAlive →', r.status, kaMethod, reason || '');
         return 'alive';
       }
@@ -179,10 +264,14 @@
            'Сессию мёртвой не считаю. Если так каждый раз — проверь endpoint: ' + KEEPALIVE_URL);
       return 'unknown';
     }).catch(function (e) {
-      STATS.kaLast = 'ERR';
-      STATS.state = 'unknown';
-      warn('KeepAlive error:', e);
-      return 'unknown';
+      netFails++;
+      STATS.kaLast = 'NET';
+      STATS.state = 'offline';
+      warn('НЕТ СВЯЗИ С СЕРВЕРОМ (' + netFails + ' подряд). ' +
+           'Типичные причины: отключён VPN, упал Wi-Fi, уснул ноутбук. ' +
+           'Пока связи нет, продлить сессию невозможно — ни скриптом, ни кнопкой "I\'m still here".', e);
+      if (netFails >= 2) showNetBanner();
+      return 'offline';
     });
   }
 
@@ -216,7 +305,8 @@
 
   function checkOverlay() {
     if (!AUTO_CLICK || !isEnabled()) return;
-    if (Date.now() - lastClickAt < 3000) return;
+    // без связи долбить кнопку бессмысленно — реже пробуем
+    if (Date.now() - lastClickAt < (STATS.state === 'offline' ? 20000 : 3000)) return;
 
     const ov    = document.getElementById('sessionTimeoutOverlay');
     const btn   = document.getElementById('sessionStillHereBtn');
@@ -338,7 +428,11 @@
   function startAntiThrottle() {
     if (!ANTI_THROTTLE || !IS_TOP || IS_POPUP) return;
     let audio;
-    try { audio = new Audio(silentWavUri(2)); audio.loop = true; audio.volume = 1; }
+    try {
+      audio = new Audio(silentWavUri(2));
+      audio[OUR_AUDIO_FLAG] = true;   // чтобы наш же блокировщик его не глушил
+      audio.loop = true; audio.volume = 1;
+    }
     catch (e) { return; }
     function tryPlay() {
       audio.play().then(function () { log('Анти-заморозка: тихий звук включён'); })
@@ -390,6 +484,34 @@
     if (d && d.parentNode) d.parentNode.removeChild(d);
   }
 
+  // Плашка "нет связи" — оранжевая, чтобы не путать с закрытой сессией
+  function showNetBanner() {
+    if (!SHOW_DEAD_BANNER || !IS_TOP || !document.body) return;
+    if (document.getElementById('session-keeper-net')) return;
+
+    const d = document.createElement('div');
+    d.id = 'session-keeper-net';
+    Object.assign(d.style, {
+      position: 'fixed', bottom: '10px', right: '14px', padding: '10px 14px',
+      background: '#e08a20', color: '#fff', fontFamily: 'Segoe UI, Arial, sans-serif',
+      fontSize: '12px', fontWeight: '700', borderRadius: '6px',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.3)', zIndex: 2147483647, maxWidth: '300px'
+    });
+    const txt = document.createElement('span');
+    txt.textContent = 'Нет связи с сервером — проверь VPN. Сессия не продлевается.';
+    const x = document.createElement('span');
+    x.textContent = '✕';
+    Object.assign(x.style, { marginLeft: '10px', cursor: 'pointer', opacity: '0.85' });
+    x.addEventListener('click', hideNetBanner);
+    d.appendChild(txt); d.appendChild(x);
+    document.body.appendChild(d);
+  }
+
+  function hideNetBanner() {
+    const d = document.getElementById('session-keeper-net');
+    if (d && d.parentNode) d.parentNode.removeChild(d);
+  }
+
   /* -------------------------------------------------------------
      🎛️ КНОПКА
   -------------------------------------------------------------- */
@@ -436,7 +558,7 @@
     function paint() {
       const on = isEnabled();
       btn.style.background = on ? COLOR_ON : COLOR_OFF;
-      btn.title = 'Session Keeper v3.2' +
+      btn.title = 'Session Keeper v3.4' +
                   '\nKeep-alive: ' + STATS.ka + ' (' + kaMethod + ', последний: ' + STATS.kaLast + ')' +
                   '\nСостояние сессии: ' + STATS.state +
                   '\nАвтопродлений: ' + STATS.saves + ' (последнее: ' + STATS.saveLast + ')' +
@@ -490,9 +612,11 @@
       if (!document.hidden && isEnabled()) { checkOverlay(); keepAlive('visible'); }
     });
     window.addEventListener('focus', function () { if (isEnabled()) checkOverlay(); });
-    window.addEventListener('online', function () { if (isEnabled()) keepAlive('online'); });
+    window.addEventListener('online', function () {
+      if (isEnabled()) keepAlive('online').then(function () { checkOverlay(); });
+    });
 
-    log('v3.2 started', IS_TOP ? '(main)' : '(frame)',
+    log('v3.4 started', IS_TOP ? '(main)' : '(frame)',
         '| таймер сайта:', KILL_SITE_TIMER ? 'отключён' : 'активен');
   }
 
