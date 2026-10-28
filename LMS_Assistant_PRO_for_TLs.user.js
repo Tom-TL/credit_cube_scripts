@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.2.8
+// @version      1.2.9
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,8 +82,12 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.2.8';
+  const SCRIPT_VERSION = '1.2.9';
   const CHANGELOG = [
+
+    { version: '1.2.9', date: '10/28/2026', changes: [
+        { script: 'AA In Progress Bulk Cleanup', text: 'Updated to standalone v6.11 logic: Auto mode on a timer (with a switch-off timer and a safety limit), clearing and unassigning done in interleaved batches so no loan is left cleared but still on AA Bot, a retry pass for failed loans, session-expiry detection, draggable/collapsible panel with last-run summary, and a warning when another copy of the script is running in the same tab. Panel header no longer shows the version number.' },
+    ]},
 
     { version: '1.2.8', date: '09/16/2026', changes: [
         { script: 'Auto-Assign', text: 'Fixed: while a job was running, the progress window appeared on every LMS page (customer details, etc.). The panel is now strictly limited to the Pending Loans report; other report tabs still show the "running in another tab" status.' },
@@ -2542,776 +2546,1510 @@ if (shouldRun('bulkOpenTabs')) runScript('bulkOpenTabs', function () {
   // SCRIPT: aaBulkCleanup
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('aaBulkCleanup')) runScript('aaBulkCleanup', function () {
-    // -------------------------
-    // Settings
-    // -------------------------
-    const REQUIRED_PRESET = 'pending';
-    const STATUS_LABEL_TEXT = 'AA In Progress';
-    const AA_FILTER_HEADER = 'AA In Progress:';
 
-    const BTN_TEXT = 'Remove all AA In Progress statuses';
-    const BTN2_TEXT = 'Remove AA In Progress and reassign from AA bot';
+  // Only one instance per page. A second injection used to attach a second set
+  // of listeners to the SAME panel elements, so one click produced two toggles.
+  if (window.__ccAaRemoverLoadedV3) return;
+  window.__ccAaRemoverLoadedV3 = true;
 
-    const PER_LOAN_DELAY_MS = 250;
-    const IFRAME_LOAD_TIMEOUT_MS = 30000;
+  // =========================================================================
+  // Settings
+  // =========================================================================
+  const REQUIRED_PRESET = 'pending';
+  const STATUS_LABEL_TEXT = 'AA In Progress';
+  const AA_FILTER_HEADER = 'AA In Progress:';
 
-    // Blocking confirm() dialog before a run.
-    // true — вернуть старое окно подтверждения
-    const CONFIRM_BEFORE_RUN = false;
+  const VERSION = '6.11';
+  // The version is shown in the panel header on purpose: an old cached copy of
+  // this script looks identical otherwise, and that is exactly how a fixed bug
+  // appears to come back.
+  const TOOL_NAME = 'AA In Progress remover';
+  const BTN_TEXT = 'Remove all AA In Progress statuses';
+  const BTN2_TEXT = 'Remove AA In Progress and reassign from AA bot';
 
-    // Safety window after a click, before anything is written.
-    // Counts down in the status line; "Stop" cancels.
-    // 0 — запуск мгновенно, без отсчёта
-    const ARM_DELAY_MS = 0;
+  const PER_LOAN_DELAY_MS = 250;
+  const IFRAME_LOAD_TIMEOUT_MS = 30000;
 
-    // How many loans go into a single "assign processing admin" postback
-    const ASSIGN_CHUNK_SIZE = 100;
+  // Blocking confirm() before a MANUAL run. true — вернуть окно подтверждения.
+  const CONFIRM_BEFORE_RUN = false;
+  // Countdown before a MANUAL run starts. 0 — мгновенный старт.
+  const ARM_DELAY_MS = 0;
 
-    // If your report is filtered to AA In Progress = Yes, keep true (faster).
-    const ONLY_ROWS_THAT_CONTAIN_AA_TEXT = true;
+  const ASSIGN_CHUNK_SIZE = 100;
+  const ONLY_ROWS_THAT_CONTAIN_AA_TEXT = true;
 
-    // -------------------------
-    // Helpers
-    // -------------------------
-    const sleep = _sleep;
-    const qs = (sel, root = document) => root.querySelector(sel);
-    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  // Clearing the status and unassigning the admin happen in interleaved
+  // batches of this size. Doing all the clearing first and all the
+  // unassigning at the end leaves loans "cleared but still on AA Bot" for
+  // minutes — long enough for the bot to approve one, which then gets
+  // unassigned too. Smaller batch = shorter window, more postbacks.
+  const INTERLEAVE_SIZE = 20;
 
-    function isPendingPresetPage() {
-      try {
-        const u = new URL(location.href);
-        return (u.searchParams.get('reportpreset') || '').toLowerCase() === REQUIRED_PRESET;
-      } catch {
-        return false;
+  // ---- Automation ----
+  // 1 minute is a test setting — it is here to watch a cycle run, not to be
+  // left on during a shift.
+  const AUTO_INTERVALS_MIN = [1, 15, 30, 60, 120];
+  const AUTO_DEFAULT_MIN = 60;
+  const AUTO_OFF_HOURS = [4, 8, 10, 12];
+  const AUTO_OFF_DEFAULT_H = 10;
+
+  const AUTO_TICK_MS = 5000;
+  const GENERATE_WAIT_MS = 45000;
+  const GENERATE_MIN_WAIT_MS = 3000;
+  const GENERATE_SETTLE_MS = 2500;
+  const FILTER_WAIT_MS = 25000;    // grace period for the filter block to re-render
+
+  // A cycle never starts in the first seconds after a page load. The report
+  // grid and the filter block are still rendering then, so a cycle fired at
+  // that moment could only skip itself — which is exactly what made the timer
+  // look random right after Generate Report.
+  const BOOT_SETTLE_MS = 15000;
+  const PAGE_LOADED_AT = Date.now();
+
+  // The switch-off timer is never honoured within this window after arming.
+  // A stale or unwritable "armed at" stamp used to make automation disarm
+  // itself in the same second the user switched it on.
+  const OFF_TIMER_GRACE_MS = 60000;
+
+  // Safety fuse: an automatic cycle refuses to touch more than this many loans.
+  const MAX_TARGETS_AUTO = 400;
+
+  // ---- Storage keys ----
+  const LS_ON = 'cc_aa3_auto_on';
+  const LS_MIN = 'cc_aa3_auto_min';
+  const LS_STAGE = 'cc_aa3_auto_stage';
+  const LS_ARMED = 'cc_aa3_auto_armed_at';
+  const LS_NEXT = 'cc_aa3_auto_next';
+  const LS_OFF_ON = 'cc_aa3_auto_off_on';
+  const LS_OFF_H = 'cc_aa3_auto_off_h';
+  const LS_COLLAPSED = 'cc_aa3_collapsed';
+  const LS_POS = 'cc_aa3_pos';
+  const LS_LAST = 'cc_aa3_last';
+
+  // =========================================================================
+  // Helpers
+  // =========================================================================
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const qs = (sel, root = document) => root.querySelector(sel);
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+
+  function trace(...args) { console.info('[AA Remove]', ...args); }
+
+  // Storage is a CACHE, never the source of truth for a running session.
+  // When it is blocked (private window, full quota, site data cleared by a
+  // policy) every write silently failed, so the next repaint read the stale
+  // old value back and the Auto toggle appeared to switch itself off the
+  // instant it was clicked. Now writes are best-effort and the live state
+  // lives in memory.
+  const STORE = (() => {
+    let healthy = true;
+    try {
+      localStorage.setItem('__cc_aa_probe', '1');
+      localStorage.removeItem('__cc_aa_probe');
+    } catch { healthy = false; }
+
+    return {
+      get healthy() { return healthy; },
+      get(k, fallback) {
+        try {
+          const v = localStorage.getItem(k);
+          return v === null ? fallback : v;
+        } catch { healthy = false; return fallback; }
+      },
+      set(k, v) {
+        try { localStorage.setItem(k, String(v)); return true; }
+        catch { healthy = false; trace('storage write failed:', k); return false; }
+      }
+    };
+  })();
+
+  const lsGet = (k, f) => STORE.get(k, f);
+  const lsSet = (k, v) => STORE.set(k, v);
+
+  function hhmm(ts) {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function fmtLeft(ms) {
+    if (ms <= 0) return 'now';
+    const total = Math.round(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+    return `${s}s`;
+  }
+
+  function isPendingPresetPage() {
+    try {
+      const u = new URL(location.href);
+      return (u.searchParams.get('reportpreset') || '').toLowerCase() === REQUIRED_PRESET;
+    } catch { return false; }
+  }
+
+  // =========================================================================
+  // Filters
+  // =========================================================================
+  function getFilterRowByHeader(headerText) {
+    const tds = Array.from(document.querySelectorAll('td.FilterHeader'));
+    const want = headerText.toLowerCase();
+    const td = tds.find((t) => norm(t.textContent).toLowerCase() === want);
+    return td ? td.parentElement : null;
+  }
+
+  function isAAInProgressYes() {
+    const tr = getFilterRowByHeader(AA_FILTER_HEADER);
+    if (!tr) return false;
+    const yes = tr.querySelector('input[type="radio"][value="yes"]');
+    return !!(yes && yes.checked);
+  }
+
+  function isProcessingAdminAll() {
+    const container = qs('#maincontent_ProcessingAdmins_Container');
+    if (!container) return false;
+
+    const modeCb = qs('#maincontent_ProcessingAdmins_checkboxMode');
+    if (modeCb && modeCb.checked) {
+      const agg = container.querySelector('.MultiSampleAggregateCheckbox[value="all"]');
+      return !!(agg && agg.checked);
+    }
+
+    const sel = qs('#maincontent_ProcessingAdmins_SingleValue');
+    return !!(sel && sel.value === 'all');
+  }
+
+  // 'ok' | 'wrong' | 'unknown'
+  //
+  // The distinction that matters: "the user set a different filter" is NOT the
+  // same thing as "the controls aren't in the DOM right now". The page rebuilds
+  // its filter block on every postback, and treating that blank instant as a
+  // changed filter is what made automation switch itself off out of nowhere.
+  function filtersState() {
+    const aaRow = getFilterRowByHeader(AA_FILTER_HEADER);
+    const admins = qs('#maincontent_ProcessingAdmins_Container');
+    if (!aaRow || !admins) return 'unknown';
+
+    if (!aaRow.querySelector('input[type="radio"][value="yes"]')) return 'unknown';
+
+    const modeCb = qs('#maincontent_ProcessingAdmins_checkboxMode');
+    const multi = !!(modeCb && modeCb.checked);
+    if (multi && !admins.querySelector('.MultiSampleAggregateCheckbox')) return 'unknown';
+    if (!multi && !qs('#maincontent_ProcessingAdmins_SingleValue')) return 'unknown';
+
+    return (isAAInProgressYes() && isProcessingAdminAll()) ? 'ok' : 'wrong';
+  }
+
+  function filtersSelectedCorrectly() {
+    return filtersState() === 'ok';
+  }
+
+  function filtersDetail() {
+    return `aa=${isAAInProgressYes()} admin=${isProcessingAdminAll()} state=${filtersState()}`;
+  }
+
+  // ---- filters SELECTED vs. filters actually APPLIED ----
+  let APPLIED_SIG = null;
+  let GENERATE_PENDING = false;
+
+  function filterSignature() {
+    const parts = [];
+
+    const aaRow = getFilterRowByHeader(AA_FILTER_HEADER);
+    if (aaRow) {
+      for (const r of aaRow.querySelectorAll('input[type="radio"]')) {
+        if (r.checked) parts.push(`aa=${r.value}`);
       }
     }
 
-    // -------------------------
-    // Filter guards (AA In Progress = Yes, Processing Admin = All Admins)
-    // -------------------------
-    function getFilterRowByHeader(headerText) {
-      const tds = Array.from(document.querySelectorAll('td.FilterHeader'));
-      const want = headerText.toLowerCase();
-      const td = tds.find((t) => norm(t.textContent).toLowerCase() === want);
-      return td ? td.parentElement : null;
-    }
-
-    function isAAInProgressYes() {
-      const tr = getFilterRowByHeader(AA_FILTER_HEADER);
-      if (!tr) return false;
-      const yes = tr.querySelector('input[type="radio"][value="yes"]');
-      return !!(yes && yes.checked);
-    }
-
-    function isProcessingAdminAll() {
-      const container = qs('#maincontent_ProcessingAdmins_Container');
-      if (!container) return false;
-
+    const admins = qs('#maincontent_ProcessingAdmins_Container');
+    if (admins) {
       const modeCb = qs('#maincontent_ProcessingAdmins_checkboxMode');
-      if (modeCb && modeCb.checked) {
-        // Multiple Admins mode -> "-- All Admins --" aggregate must be checked
-        const agg = container.querySelector('.MultiSampleAggregateCheckbox[value="all"]');
-        return !!(agg && agg.checked);
-      }
-
+      parts.push(`adminMode=${modeCb && modeCb.checked ? 'multi' : 'single'}`);
       const sel = qs('#maincontent_ProcessingAdmins_SingleValue');
-      return !!(sel && sel.value === 'all');
-    }
-
-    // -------------------------
-    // Report freshness: filters SELECTED vs. filters actually APPLIED
-    //
-    // Changing a filter does not touch the grid — the user must press
-    // "Generate Report". Until then the page still shows the previous result
-    // set, so acting on it would hit the wrong loans.
-    // -------------------------
-    let APPLIED_SIG = null;        // filter state the visible report was built with
-    let GENERATE_PENDING = false;  // Generate Report pressed, waiting for the new grid
-
-    function getFilterRegions() {
-      const regions = new Set();
-      for (const td of document.querySelectorAll('td.FilterHeader')) {
-        if (td.parentElement) regions.add(td.parentElement);
+      if (sel) parts.push(`admin=${sel.value}`);
+      for (const cb of admins.querySelectorAll('input[type="checkbox"]')) {
+        if (cb !== modeCb && cb.checked && cb.value) parts.push(`adminCb=${cb.value}`);
       }
-      const admins = qs('#maincontent_ProcessingAdmins_Container');
-      if (admins) regions.add(admins);
-      return Array.from(regions);
     }
+    return parts.join('|');
+  }
 
-    // Fingerprint of every filter control. Compared against the fingerprint
-    // taken when the report was generated, so toggling a radio away and back
-    // is correctly seen as "nothing changed" rather than as a pending change.
-    function filterSignature() {
-      const parts = [];
-      const seen = new Set();
+  // A signature taken while the filter block is half-rendered is worse than
+  // no signature at all: it is truthy, it never matches the full one again,
+  // and the buttons stay greyed out until the page is reloaded. So a
+  // signature only counts once BOTH filters are present in it.
+  function signatureComplete(sig) {
+    return !!sig && /(^|\|)aa=/.test(sig) && /(^|\|)adminMode=/.test(sig);
+  }
 
-      for (const region of getFilterRegions()) {
-        for (const el of region.querySelectorAll('input, select')) {
-          if (seen.has(el)) continue;
-          seen.add(el);
+  function rebaseSignature() {
+    const sig = filterSignature();
+    if (signatureComplete(sig)) { APPLIED_SIG = sig; return true; }
+    return false;
+  }
 
-          const key = el.id || el.name || '';
-          if (/LoanIds$|CustomerIds$/i.test(key)) continue; // row checkboxes, not filters
-          if (el.type === 'submit' || el.type === 'button' || el.type === 'hidden') continue;
-
-          parts.push(
-            el.type === 'checkbox' || el.type === 'radio'
-              ? `${key}#${el.value}=${el.checked ? 1 : 0}`
-              : `${key}=${el.value}`
-          );
-        }
-      }
-      return parts.join('|');
+  async function rebaseSignatureWhenReady(timeoutMs) {
+    const until = Date.now() + timeoutMs;
+    while (Date.now() < until) {
+      if (rebaseSignature()) return true;
+      await sleep(300);
     }
+    return rebaseSignature();
+  }
 
-    function isReportStale() {
-      return APPLIED_SIG !== null && filterSignature() !== APPLIED_SIG;
+  function isReportStale() {
+    if (APPLIED_SIG === null) return false;
+    const now = filterSignature();
+    if (!signatureComplete(now)) return false;          // page mid-render — no verdict
+    if (!signatureComplete(APPLIED_SIG)) { APPLIED_SIG = now; return false; }
+    return now !== APPLIED_SIG;
+  }
+
+  function findGenerateButton() {
+    const btns = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button, a'));
+    return btns.find((b) => /^generate\s*report$/i.test(norm(b.value || b.textContent || ''))) ||
+           btns.find((b) => /generate\s*report/i.test(norm(b.value || b.textContent || ''))) || null;
+  }
+
+  function isGenerateButton(el) {
+    if (!el) return false;
+    return /generate\s*report/i.test(norm(el.value || el.textContent || ''));
+  }
+
+  function countLoanRows() {
+    const seen = new Set();
+    for (const a of document.querySelectorAll('a[href*="CustomerDetails.aspx?customerid="]')) {
+      const tr = a.closest('tr');
+      if (tr) seen.add(tr);
     }
+    return seen.size;
+  }
 
-    function isGenerateButton(el) {
-      if (!el) return false;
-      const txt = norm(el.value || el.textContent || '');
-      return /generate\s*report/i.test(txt);
+  // 'ok' | 'wrong' | 'unknown' — an empty grid proves nothing.
+  function gridVerdict() {
+    const anchors = document.querySelectorAll('a[href*="CustomerDetails.aspx?customerid="]');
+    if (!anchors.length) return 'unknown';
+
+    const seen = new Set();
+    for (const a of anchors) {
+      const tr = a.closest('tr');
+      if (!tr || seen.has(tr)) continue;
+      seen.add(tr);
+      if (!(tr.textContent || '').includes(STATUS_LABEL_TEXT)) return 'wrong';
     }
+    return seen.size ? 'ok' : 'unknown';
+  }
 
-    // Independent proof that the AA filter is really applied to what we see:
-    // with "AA In Progress = Yes" every listed loan must carry that status.
-    // Bails out on the first row without it, so the stale case is cheap.
-    function isGridAAFiltered() {
-      const anchors = document.querySelectorAll('a[href*="CustomerDetails.aspx?customerid="]');
-      if (!anchors.length) return false;
+  // Can a MANUAL run act on what is on screen right now?
+  function manualReady() {
+    if (!filtersSelectedCorrectly()) return { ok: false, why: '' };
+    if (isReportStale()) return { ok: false, why: 'Filters changed — press "Generate Report".' };
+    const v = gridVerdict();
+    if (v === 'wrong') return { ok: false, why: 'The list on screen is not AA-filtered — press "Generate Report".' };
+    if (v === 'unknown') return { ok: false, why: 'No loans on screen — press "Generate Report".' };
+    return { ok: true, why: '' };
+  }
 
-      const seen = new Set();
-      for (const a of anchors) {
-        const tr = a.closest('tr');
-        if (!tr || seen.has(tr)) continue;
-        seen.add(tr);
-        if (!(tr.textContent || '').includes(STATUS_LABEL_TEXT)) return false;
-      }
-      return seen.size > 0;
+  // =========================================================================
+  // Automation state
+  //
+  // Live in memory, mirrored to storage. Reading storage back on every repaint
+  // is what let a failed write (or a stale value from another tab) silently
+  // undo the user's click.
+  // =========================================================================
+  const STATE = (() => {
+    const min = parseInt(lsGet(LS_MIN, String(AUTO_DEFAULT_MIN)), 10);
+    const offH = parseInt(lsGet(LS_OFF_H, String(AUTO_OFF_DEFAULT_H)), 10);
+    return {
+      on: lsGet(LS_ON, '0') === '1',
+      min: AUTO_INTERVALS_MIN.includes(min) ? min : AUTO_DEFAULT_MIN,
+      offOn: lsGet(LS_OFF_ON, '1') === '1',
+      offH: AUTO_OFF_HOURS.includes(offH) ? offH : AUTO_OFF_DEFAULT_H,
+      armedAt: parseInt(lsGet(LS_ARMED, '0'), 10) || 0,
+      // Read ONCE, at boot, so a reload continues the countdown instead of
+      // restarting it. It is never re-read afterwards: during the session the
+      // countdown lives in memory, where nothing outside this tab can move it.
+      nextAt: parseInt(lsGet(LS_NEXT, '0'), 10) || 0,
+      last: lsGet(LS_LAST, '')
+    };
+  })();
+
+  // A stamp in the future (clock change, another machine) would make the
+  // switch-off timer fire at a random moment.
+  if (STATE.armedAt > Date.now()) STATE.armedAt = Date.now();
+
+  function autoEnabled() { return STATE.on; }
+
+  function setAutoEnabled(v, reason) {
+    STATE.on = !!v;
+    lsSet(LS_ON, STATE.on ? '1' : '0');
+    if (STATE.on) {
+      STATE.armedAt = Date.now();
+      lsSet(LS_ARMED, STATE.armedAt);
+      rearm();
+    } else {
+      STATE.nextAt = 0;
+      lsSet(LS_NEXT, 0);
     }
+    trace(`automation ${STATE.on ? 'ON' : 'OFF'}${reason ? ' — ' + reason : ''}`);
+  }
 
-    function checkGuards() {
-      const problems = [];
-      if (!isAAInProgressYes()) problems.push('filter "AA In Progress" must be set to Yes');
-      if (!isProcessingAdminAll()) problems.push('filter "Processing Admin" must be "-- All Admins --"');
+  function autoMinutes() { return STATE.min; }
+  function setAutoMinutes(n) {
+    if (!AUTO_INTERVALS_MIN.includes(n)) return;
+    STATE.min = n;
+    lsSet(LS_MIN, n);
+  }
 
-      if (isReportStale()) {
-        problems.push('filters changed — press "Generate Report" to apply them');
-      } else if (!isGridAAFiltered()) {
-        problems.push('the report on screen is not an AA In Progress list — press "Generate Report"');
-      }
-      return problems;
-    }
+  function autoOffEnabled() { return STATE.offOn; }
+  function setAutoOffEnabled(v) {
+    STATE.offOn = !!v;
+    lsSet(LS_OFF_ON, STATE.offOn ? '1' : '0');
+  }
 
-    // -------------------------
-    // Hidden worker frame
-    // -------------------------
-    function ensureWorkerFrame() {
-      let frame = qs('#cc-aa-remove-worker');
-      if (frame) return frame;
+  function autoOffHours() { return STATE.offH; }
+  function setAutoOffHours(n) {
+    if (!AUTO_OFF_HOURS.includes(n)) return;
+    STATE.offH = n;
+    lsSet(LS_OFF_H, n);
+  }
 
-      frame = document.createElement('iframe');
-      frame.id = 'cc-aa-remove-worker';
-      frame.name = 'cc-aa-remove-worker';
-      frame.style.cssText = `
-        position: fixed;
-        width: 10px;
-        height: 10px;
-        left: -9999px;
-        top: -9999px;
-        opacity: 0;
-        pointer-events: none;
-      `;
-      document.body.appendChild(frame);
-      return frame;
-    }
+  function armedAt() { return STATE.armedAt; }
+  function reArmClock() {
+    STATE.armedAt = Date.now();
+    lsSet(LS_ARMED, STATE.armedAt);
+  }
 
-    async function loadInFrame(frame, url) {
-      return new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('Frame load timeout: ' + url)), IFRAME_LOAD_TIMEOUT_MS);
-        frame.onload = () => {
-          clearTimeout(t);
-          resolve();
-        };
-        frame.src = url;
-      });
-    }
+  function autoOffAt() {
+    if (!STATE.offOn) return 0;
+    return STATE.armedAt ? STATE.armedAt + STATE.offH * 3600000 : 0;
+  }
 
-    // -------------------------
-    // Panel
-    // -------------------------
-    function createPanel() {
-      if (qs('#cc-aa-remove-panel')) return qs('#cc-aa-remove-panel');
+  function nextRunAt() { return STATE.nextAt; }
 
-      const panel = document.createElement('div');
-      panel.id = 'cc-aa-remove-panel';
-      panel.style.cssText = `
-        position: fixed;
-        right: 16px;
-        bottom: 16px;
-        z-index: 999999;
-        background: rgba(25, 25, 25, 0.92);
-        color: #fff;
-        border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 10px;
-        padding: 10px 12px;
-        font-family: Arial, sans-serif;
-        font-size: 12px;
-        min-width: 430px;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.35);
-      `;
+  // The ONLY three things that may ever set the countdown: switching Auto on,
+  // changing the interval, and a cycle finishing. Nothing else calls this —
+  // no page load, no postback, no skipped cycle, no other tab.
+  function rearm() {
+    STATE.nextAt = Date.now() + autoMinutes() * 60000;
+    lsSet(LS_NEXT, STATE.nextAt);
+    trace('next run at', hhmm(STATE.nextAt));
+  }
 
-      panel.innerHTML = `
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <div style="font-weight:700;">AA In Progress remover</div>
-          <button id="cc-aa-x" style="cursor:pointer; border:none; background:transparent; color:#fff; font-size:16px; line-height:16px;">&times;</button>
+  function setLastResult(text) {
+    STATE.last = `${hhmm(Date.now())} — ${text}`;
+    lsSet(LS_LAST, STATE.last);
+  }
+  function lastResult() { return STATE.last; }
+
+  // =========================================================================
+  // Hidden worker frame
+  // =========================================================================
+  function ensureWorkerFrame() {
+    let frame = qs('#cc-aa-remove-worker');
+    if (frame) return frame;
+
+    frame = document.createElement('iframe');
+    frame.id = 'cc-aa-remove-worker';
+    frame.name = 'cc-aa-remove-worker';
+    frame.style.cssText = `
+      position: fixed; width: 10px; height: 10px;
+      left: -9999px; top: -9999px; opacity: 0; pointer-events: none;
+    `;
+    document.body.appendChild(frame);
+    return frame;
+  }
+
+  async function loadInFrame(frame, url) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Frame load timeout: ' + url)), IFRAME_LOAD_TIMEOUT_MS);
+      frame.onload = () => { clearTimeout(t); resolve(); };
+      frame.src = url;
+    });
+  }
+
+  // =========================================================================
+  // Panel
+  // =========================================================================
+  let UI = null;
+  let STOP = false;
+  let RUNNING = false;
+  let AUTO_BUSY = false;
+
+  let COLLAPSED = lsGet(LS_COLLAPSED, '0') === '1';
+  function collapsed() { return COLLAPSED; }
+  function setCollapsed(v) { COLLAPSED = !!v; lsSet(LS_COLLAPSED, COLLAPSED ? '1' : '0'); }
+
+  function savedPos() {
+    try {
+      const p = JSON.parse(lsGet(LS_POS, '') || 'null');
+      return p && typeof p.left === 'number' && typeof p.top === 'number' ? p : null;
+    } catch { return null; }
+  }
+  function savePos(left, top) { lsSet(LS_POS, JSON.stringify({ left, top })); }
+
+  function applyPos(panel) {
+    const p = savedPos();
+    if (!p) return;
+    const left = Math.max(4, Math.min(p.left, window.innerWidth - (panel.offsetWidth || 470) - 4));
+    const top = Math.max(4, Math.min(p.top, window.innerHeight - (panel.offsetHeight || 120) - 4));
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  }
+
+  function buildPanel() {
+    const panel = document.createElement('div');
+    panel.id = 'cc-aa-remove-panel-v3';
+    panel.style.cssText = `
+      position: fixed; right: 16px; bottom: 16px; z-index: 999999;
+      background: rgba(25, 25, 25, 0.94); color: #fff;
+      border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+      padding: 8px 12px 10px; font-family: Arial, sans-serif; font-size: 12px;
+      min-width: 470px; max-width: 540px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+    `;
+
+    panel.innerHTML = `
+      <div id="cc-aa-head" title="Drag to move" style="display:flex; align-items:center; gap:10px; cursor:move; user-select:none;">
+        <div style="font-weight:700; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          <span>${TOOL_NAME}</span><span id="cc-aa-badge" style="opacity:.8; font-weight:400;"></span>
         </div>
+        <button id="cc-aa-fold" title="Collapse / expand" style="
+          cursor:pointer; border:none; background:transparent; color:#fff;
+          font-size:13px; line-height:13px; padding:2px 4px;
+        ">▾</button>
+      </div>
 
+      <div id="cc-aa-body">
         <div style="margin-top:8px; display:flex; gap:8px;">
           <button id="cc-aa-run" style="
             cursor:pointer; border:none; background:#ff7a00; color:#111; font-weight:700;
             border-radius:8px; padding:8px 10px; flex:1;
-          ">${BTN_TEXT}</button>
-
-          <button id="cc-aa-stop" style="
+          " title="Removes the AA In Progress status from every loan in the list on screen. Processing Admin is not changed.">${BTN_TEXT}</button>
+          <button id="cc-aa-stop" title="Stops after the loan currently being processed. Nothing already done is undone." style="
             cursor:pointer; border:1px solid rgba(255,255,255,.25); background:transparent; color:#fff;
             font-weight:700; border-radius:8px; padding:8px 10px; width:84px;
-          " title="Stop current run">Stop</button>
+          ">Stop</button>
         </div>
 
         <div style="margin-top:8px;">
           <button id="cc-aa-run2" style="
             cursor:pointer; border:none; background:#2f9e44; color:#fff; font-weight:700;
             border-radius:8px; padding:8px 10px; width:100%;
-          ">${BTN2_TEXT}</button>
+          " title="Removes AA In Progress and sets Processing Admin to -- no admin --, in batches, so a loan is never left cleared but still on the bot.">${BTN2_TEXT}</button>
+        </div>
+
+        <div style="margin-top:10px; padding-top:9px; border-top:1px solid rgba(255,255,255,.14);">
+          <div style="display:flex; align-items:center; gap:9px; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none;">
+              <input type="checkbox" id="cc-aa-auto" title="Runs the green action on a timer" style="position:absolute; opacity:0; width:0; height:0;">
+              <span id="cc-aa-track" style="
+                width:38px; height:20px; border-radius:999px; background:#4a4a4a;
+                display:inline-block; position:relative; transition:background .15s ease;
+              "><span id="cc-aa-knob" style="
+                position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+                background:#fff; transition:left .15s ease;
+              "></span></span>
+              <span style="font-weight:700;">Auto</span>
+            </label>
+
+            <select id="cc-aa-interval" title="How often the automatic cycle runs" style="
+              background:#1f1f1f; color:#fff; border:1px solid rgba(255,255,255,.25);
+              border-radius:6px; padding:4px 6px; font-size:12px; cursor:pointer;
+            ">${AUTO_INTERVALS_MIN.map((m) => `<option value="${m}">${m >= 60 ? `every ${m / 60} h` : `every ${m} min`}</option>`).join('')}</select>
+
+            <div id="cc-aa-next" title="Time of the next automatic cycle" style="margin-left:auto; opacity:.9; white-space:nowrap;">off</div>
+          </div>
+
+          <div style="margin-top:7px; display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; opacity:.9;">
+              <input type="checkbox" id="cc-aa-off-on" title="Automation disarms itself after the chosen time, counted from the moment you switched it on" style="cursor:pointer;">
+              <span>switch off after</span>
+            </label>
+            <select id="cc-aa-off-h" title="How long automation stays armed before switching itself off" style="
+              background:#1f1f1f; color:#fff; border:1px solid rgba(255,255,255,.25);
+              border-radius:6px; padding:3px 6px; font-size:12px; cursor:pointer;
+            ">${AUTO_OFF_HOURS.map((h) => `<option value="${h}">${h} h</option>`).join('')}</select>
+            <div id="cc-aa-off-left" style="margin-left:auto; opacity:.75; white-space:nowrap;"></div>
+          </div>
+
+          <div style="margin-top:8px; font-size:11px; line-height:1.55; opacity:.7;">
+            <div><b style="color:#ffa94d;">Orange</b> — removes <b>AA In Progress</b>. Admin untouched.</div>
+            <div><b style="color:#69db7c;">Green</b> — removes <b>AA In Progress</b> and sets Processing Admin to <b>-- no admin --</b>.</div>
+            <div><b>Auto</b> — repeats the green action on a timer: presses Generate Report, waits for the list, runs it. Needs this tab open.</div>
+          </div>
         </div>
 
         <div id="cc-aa-status" style="margin-top:8px; opacity:0.95;">Ready.</div>
+        <div id="cc-aa-last" title="Result of the last finished run — survives a page reload" style="margin-top:4px; font-size:11px; opacity:.6;"></div>
+        <div id="cc-aa-warn" style="margin-top:4px; font-size:11px; color:#ffe08a; display:none;"></div>
+        <div id="cc-aa-err" style="margin-top:6px; font-size:11px; color:#ffd7d7; display:none;"></div>
+      </div>
+    `;
 
-        <div id="cc-aa-err" style="margin-top:6px; opacity:0.9; font-size:11px; color:#ffd7d7; display:none;"></div>
-      `;
+    document.body.appendChild(panel);
+    applyPos(panel);
+    return panel;
+  }
 
-      document.body.appendChild(panel);
+  function createPanel() {
+    let panel = qs('#cc-aa-remove-panel-v3');
+    if (!panel) panel = buildPanel();
+    if (UI && UI.panel === panel) return panel;
 
-      const statusEl = qs('#cc-aa-status', panel);
-      const errEl = qs('#cc-aa-err', panel);
-      const btnEl = qs('#cc-aa-run', panel);
-      const btn2El = qs('#cc-aa-run2', panel);
-      const stopEl = qs('#cc-aa-stop', panel);
+    UI = {
+      panel,
+      statusEl: qs('#cc-aa-status', panel),
+      errEl: qs('#cc-aa-err', panel),
+      warnEl: qs('#cc-aa-warn', panel),
+      lastEl: qs('#cc-aa-last', panel),
+      buttons: [qs('#cc-aa-run', panel), qs('#cc-aa-run2', panel)],
+      autoCb: qs('#cc-aa-auto', panel),
+      trackEl: qs('#cc-aa-track', panel),
+      knobEl: qs('#cc-aa-knob', panel),
+      intervalEl: qs('#cc-aa-interval', panel),
+      nextEl: qs('#cc-aa-next', panel),
+      offCb: qs('#cc-aa-off-on', panel),
+      offSel: qs('#cc-aa-off-h', panel),
+      offLeftEl: qs('#cc-aa-off-left', panel),
+      bodyEl: qs('#cc-aa-body', panel),
+      foldEl: qs('#cc-aa-fold', panel),
+      headEl: qs('#cc-aa-head', panel),
+      badgeEl: qs('#cc-aa-badge', panel)
+    };
 
-      const buttons = [btnEl, btn2El];
-      const ui = { statusEl, errEl, buttons };
+    // Every handler below closes over ITS OWN element on purpose. Reading
+    // UI.autoCb inside the handler was a bug: if the panel got rebuilt during
+    // the same event dispatch, UI already pointed at a fresh checkbox holding
+    // the OLD stored value, so clicking "on" stored "off".
+    const autoCb = UI.autoCb, intervalEl = UI.intervalEl;
+    const offCb = UI.offCb, offSel = UI.offSel;
 
-      qs('#cc-aa-x', panel).addEventListener('click', () => {
-        STOP = true;
-        panel.remove();
-        DISMISSED = true;
+    syncControls();
+    UI.lastEl.textContent = lastResult() ? `Last: ${lastResult()}` : '';
+
+    if (!STORE.healthy) {
+      UI.warnEl.style.display = 'block';
+      UI.warnEl.textContent = 'Browser storage is blocked — settings work for this tab only and reset on reload.';
+    }
+
+    UI.foldEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setCollapsed(!collapsed());
+      paint();
+    });
+
+    qs('#cc-aa-stop', panel).addEventListener('click', () => { STOP = true; });
+
+    autoCb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      setAutoEnabled(autoCb.checked, 'by hand');
+      paint();
+    });
+
+    intervalEl.addEventListener('change', (e) => {
+      e.stopPropagation();
+      setAutoMinutes(parseInt(intervalEl.value, 10));
+      if (autoEnabled()) rearm();
+      paint();
+    });
+
+    offCb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      setAutoOffEnabled(offCb.checked);
+      if (offCb.checked && autoEnabled()) reArmClock();
+      paint();
+    });
+
+    offSel.addEventListener('change', (e) => {
+      e.stopPropagation();
+      setAutoOffHours(parseInt(offSel.value, 10));
+      if (autoEnabled()) reArmClock();
+      paint();
+    });
+
+    UI.buttons[0].addEventListener('click', () => startManual(false));
+    UI.buttons[1].addEventListener('click', () => startManual(true));
+
+    enableDragging(panel, UI.headEl);
+    paint();
+    return panel;
+  }
+
+  function removePanel() {
+    const panel = qs('#cc-aa-remove-panel-v3');
+    if (panel) panel.remove();
+    UI = null;
+  }
+
+  function enableDragging(panel, handle) {
+    let dragging = false, dx = 0, dy = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target.id === 'cc-aa-fold') return;
+      const r = panel.getBoundingClientRect();
+      dragging = true;
+      dx = e.clientX - r.left;
+      dy = e.clientY - r.top;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      panel.style.left = `${Math.max(4, Math.min(e.clientX - dx, window.innerWidth - panel.offsetWidth - 4))}px`;
+      panel.style.top = `${Math.max(4, Math.min(e.clientY - dy, window.innerHeight - panel.offsetHeight - 4))}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      const r = panel.getBoundingClientRect();
+      savePos(Math.round(r.left), Math.round(r.top));
+    });
+  }
+
+  // Pushes state INTO the controls, and only where it actually differs, so a
+  // repaint that lands mid-click can never fight the user.
+  function syncControls() {
+    if (!UI) return;
+    if (UI.autoCb.checked !== autoEnabled()) UI.autoCb.checked = autoEnabled();
+    if (UI.intervalEl.value !== String(autoMinutes())) UI.intervalEl.value = String(autoMinutes());
+    if (UI.offCb.checked !== autoOffEnabled()) UI.offCb.checked = autoOffEnabled();
+    if (UI.offSel.value !== String(autoOffHours())) UI.offSel.value = String(autoOffHours());
+  }
+
+  function paint() {
+    if (!UI) return;
+
+    const on = autoEnabled();
+    const busy = RUNNING || AUTO_BUSY;
+    const ready = manualReady();
+    const folded = collapsed();
+
+    UI.bodyEl.style.display = folded ? 'none' : '';
+    UI.foldEl.textContent = folded ? '▸' : '▾';
+    UI.panel.style.minWidth = folded ? '0' : '470px';
+    UI.panel.style.padding = folded ? '6px 10px' : '8px 12px 10px';
+
+    let badge = '';
+    if (busy) badge = ' · working…';
+    else if (on) {
+      const due = nextRunAt();
+      badge = due ? ` · Auto ${hhmm(due)}` : ' · Auto';
+    }
+    UI.badgeEl.textContent = badge;
+
+    UI.trackEl.style.background = on ? '#2f9e44' : '#4a4a4a';
+    UI.knobEl.style.left = on ? '20px' : '2px';
+
+    if (!on) {
+      UI.nextEl.textContent = 'off';
+      UI.nextEl.style.color = 'rgba(255,255,255,.65)';
+    } else if (busy) {
+      UI.nextEl.textContent = 'running…';
+      UI.nextEl.style.color = '#8ce99a';
+    } else {
+      const due = nextRunAt();
+      UI.nextEl.textContent = due ? `next ${hhmm(due)} (in ${fmtLeft(due - Date.now())})` : 'armed';
+      UI.nextEl.style.color = '#8ce99a';
+    }
+
+    const offAt = autoOffAt();
+    UI.offLeftEl.textContent = (on && offAt) ? `off in ${fmtLeft(offAt - Date.now())}` : '';
+
+    setButtonsEnabled(ready.ok && !busy);
+
+    // Hint only when the buttons are greyed out and nothing is running.
+    if (!busy && !ready.ok && ready.why) {
+      const t = UI.statusEl.textContent;
+      if (t === 'Ready.' || /press "Generate Report"/i.test(t)) UI.statusEl.textContent = ready.why;
+    } else if (!busy && ready.ok && /press "Generate Report"/i.test(UI.statusEl.textContent)) {
+      UI.statusEl.textContent = 'Ready.';
+    }
+  }
+
+  function setButtonsEnabled(enabled) {
+    if (!UI) return;
+    for (const b of UI.buttons) {
+      if (!b) continue;
+      b.disabled = !enabled;
+      b.style.opacity = enabled ? '1' : '0.45';
+      b.style.cursor = enabled ? 'pointer' : 'not-allowed';
+    }
+  }
+
+  const setStatus = (t) => { if (UI) UI.statusEl.textContent = t; };
+  const setError = (t) => {
+    if (!UI) return;
+    UI.errEl.style.display = t ? 'block' : 'none';
+    UI.errEl.textContent = t || '';
+  };
+  const setLastLine = () => { if (UI) UI.lastEl.textContent = lastResult() ? `Last: ${lastResult()}` : ''; };
+
+  // =========================================================================
+  // Manual run
+  // =========================================================================
+  async function startManual(reassign) {
+    if (RUNNING || AUTO_BUSY) return;
+    if (!manualReady().ok) return;
+
+    if (CONFIRM_BEFORE_RUN) {
+      const text = reassign
+        ? 'Remove "AA In Progress" for ALL loans in this list AND set Processing Admin to "-- no admin --"?'
+        : 'Remove "AA In Progress" for ALL loans in this list?\n\nProcessing Admin will NOT be changed.';
+      if (!confirm(text)) return;
+    }
+
+    RUNNING = true;
+    STOP = false;
+    setError('');
+    setButtonsEnabled(false);
+
+    try {
+      if (ARM_DELAY_MS > 0) {
+        for (let left = Math.ceil(ARM_DELAY_MS / 1000); left > 0; left--) {
+          if (STOP) break;
+          setStatus(`Starting in ${left}s. Press Stop to cancel.`);
+          await sleep(1000);
+        }
+        if (STOP) { setStatus('Cancelled. Ready.'); return; }
+      }
+      await run({ reassign });
+    } catch (e) {
+      console.error(e);
+      setError(`Fatal: ${e.message || e}`);
+      setStatus('Stopped with error.');
+    } finally {
+      RUNNING = false;
+      paint();
+    }
+  }
+
+  // =========================================================================
+  // Collecting loans
+  // =========================================================================
+  function extractLoanIdFromRow(tr) {
+    for (const td of Array.from(tr.querySelectorAll('td'))) {
+      const t = (td.textContent || '').trim();
+      if (/^\d{7,9}$/.test(t)) return t;
+    }
+    const m = norm(tr.textContent).match(/\b\d{7,9}\b/);
+    return m ? m[0] : null;
+  }
+
+  function collectLoansFromCurrentView() {
+    const map = new Map();
+    for (const a of Array.from(document.querySelectorAll('a[href*="CustomerDetails.aspx?customerid="]'))) {
+      const tr = a.closest('tr');
+      if (!tr) continue;
+      const loanId = extractLoanIdFromRow(tr);
+      if (!loanId || map.has(loanId)) continue;
+      map.set(loanId, {
+        loanId,
+        name: (a.textContent || '').trim(),
+        hasAA: (tr.textContent || '').includes(STATUS_LABEL_TEXT)
       });
-
-      stopEl.addEventListener('click', () => { STOP = true; });
-
-      async function start(reassign, confirmText) {
-        if (RUNNING) return;
-        if (checkGuards().length) { ensurePanelVisibility(); return; }
-        if (CONFIRM_BEFORE_RUN && !confirm(confirmText)) return;
-
-        // Lock right away: blocks a double-click and keeps the panel
-        // alive even if a filter flickers while we count down.
-        RUNNING = true;
-        STOP = false;
-        errEl.style.display = 'none';
-        errEl.textContent = '';
-        setButtonsEnabled(false, buttons);
-
-        try {
-          if (ARM_DELAY_MS > 0) {
-            const what = reassign
-              ? 'remove AA In Progress + unassign from AA Bot'
-              : 'remove AA In Progress';
-
-            for (let left = Math.ceil(ARM_DELAY_MS / 1000); left > 0; left--) {
-              if (STOP) break;
-              statusEl.textContent = `Starting in ${left}s — ${what}. Press Stop to cancel.`;
-              await sleep(1000);
-            }
-
-            if (STOP) {
-              statusEl.textContent = 'Cancelled. Ready.';
-              return;
-            }
-          }
-
-          await run({ reassign }, ui);
-        } catch (e) {
-          console.error(e);
-          errEl.style.display = 'block';
-          errEl.textContent = `Fatal: ${e.message || e}`;
-          statusEl.textContent = 'Stopped with error.';
-        } finally {
-          RUNNING = false;
-          setButtonsEnabled(true, buttons);
-        }
-      }
-
-      btnEl.title = ARM_DELAY_MS > 0
-        ? `Starts after ${Math.ceil(ARM_DELAY_MS / 1000)}s — press Stop to cancel`
-        : 'Starts immediately';
-      btn2El.title = btnEl.title;
-
-      btnEl.addEventListener('click', () => start(
-        false,
-        'Remove "AA In Progress" for ALL loans in this Pending list?\n\n' +
-        'Processing Admin will NOT be changed.\n' +
-        'Runs in background and will NOT reload your report page.'
-      ));
-
-      btn2El.addEventListener('click', () => start(
-        true,
-        'Remove "AA In Progress" for ALL loans in this Pending list\n' +
-        'AND set Processing Admin to "-- no admin --" (unassign from AA Bot)?\n\n' +
-        'Runs in background and will NOT reload your report page.'
-      ));
-
-      return panel;
     }
+    return Array.from(map.values());
+  }
 
-    function setButtonsEnabled(enabled, btns) {
-      for (const b of btns) {
-        if (!b) continue;
-        b.disabled = !enabled;
-        b.style.opacity = enabled ? '1' : '0.5';
-        b.style.cursor = enabled ? 'pointer' : 'not-allowed';
-      }
-    }
+  function getPagerNextButton() {
+    const next = qs('#maincontent_PagerNextLinkButton');
+    if (!next) return null;
+    const href = (next.getAttribute('href') || '').trim();
+    const cls = (next.getAttribute('class') || '').trim();
+    const disabled = cls.includes('aspNetDisabled') || href === '' || href === '#' || href === 'javascript:void(0)';
+    return disabled ? null : next;
+  }
 
-    // -------------------------
-    // Collect loans (from Name links)
-    // -------------------------
-    function extractLoanIdFromRow(tr) {
-      const tds = Array.from(tr.querySelectorAll('td'));
-      for (const td of tds) {
-        const t = (td.textContent || '').trim();
-        if (/^\d{7,9}$/.test(t)) return t;
-      }
-      const rowText = norm(tr.textContent);
-      const m = rowText.match(/\b\d{7,9}\b/);
-      return m ? m[0] : null;
-    }
+  async function collectAllPages() {
+    const all = new Map();
+    const pages = [];
+    let page = 0;
 
-    function collectLoansFromCurrentView() {
-      const anchors = Array.from(document.querySelectorAll('a[href*="CustomerDetails.aspx?customerid="]'));
-      const map = new Map();
+    while (page < 200) {
+      page++;
 
-      for (const a of anchors) {
-        const tr = a.closest('tr');
-        if (!tr) continue;
+      const items = collectLoansFromCurrentView();
+      for (const it of items) if (!all.has(it.loanId)) all.set(it.loanId, it);
 
-        const loanId = extractLoanIdFromRow(tr);
-        if (!loanId) continue;
+      const snapshot = buildAssignSnapshot();
+      if (snapshot) pages.push(snapshot);
 
-        const name = (a.textContent || '').trim();
-        const rowText = (tr.textContent || '');
-        const hasAA = rowText.includes(STATUS_LABEL_TEXT);
+      setStatus(`Collecting loans… Found ${all.size} (scan page ${page}).`);
 
-        if (!map.has(loanId)) map.set(loanId, { loanId, name, hasAA });
-      }
-      return Array.from(map.values());
-    }
+      const next = getPagerNextButton();
+      if (!next) break;
 
-    function getPagerNextButton() {
-      const next = qs('#maincontent_PagerNextLinkButton');
-      if (!next) return null;
+      const firstBefore = items[0]?.loanId || '';
+      next.click();
 
-      const href = (next.getAttribute('href') || '').trim();
-      const cls = (next.getAttribute('class') || '').trim();
-      const disabled = cls.includes('aspNetDisabled') || href === '' || href === '#' || href === 'javascript:void(0)';
-      return disabled ? null : next;
-    }
-
-    // -------------------------
-    // "Assign processing admin" snapshot (postback payload for the CURRENT DOM)
-    // -------------------------
-    const NO_ADMIN_VALUE = '0';
-
-    function buildAssignSnapshot() {
-      const form = qs('#Page_Form') || qs('form');
-      if (!form) return null;
-
-      const container = qs('#maincontent_Tr_AssignProcessingAdminControls');
-      if (!container) return null;
-
-      const select = container.querySelector('select');
-      const btn = container.querySelector('input[type="submit"], input[type="button"], button');
-      if (!select || !btn) return null;
-
-      const selectName = select.getAttribute('name');
-      const btnName = btn.getAttribute('name');
-      const btnValue = btn.getAttribute('value') || btn.value || 'Update';
-      if (!selectName || !btnName) return null;
-
-      // Make sure "-- no admin --" really exists in the dropdown
-      const hasNoAdmin = Array.from(select.options).some((o) => o.value === NO_ADMIN_VALUE);
-      if (!hasNoAdmin) return null;
-
-      // Snapshot of every field currently posted by the report form
-      const base = new URLSearchParams();
-      const fd = new FormData(form);
-      for (const [k, v] of fd.entries()) {
-        if (typeof v !== 'string') continue;
-        // drop every bulk-action checkbox group; we add only ours
-        if (/LoanIds$|CustomerIds$/i.test(k)) continue;
-        base.append(k, v);
-      }
-
-      base.set('__EVENTTARGET', '');
-      base.set('__EVENTARGUMENT', '');
-      base.set(selectName, NO_ADMIN_VALUE);
-
-      // Loan ids rendered on this page (event-validation-safe set)
-      const available = new Set(
-        Array.from(document.querySelectorAll('input[name="processingAdminLoanIds"]')).map((cb) => cb.value)
-      );
-
-      return {
-        action: new URL(form.getAttribute('action') || location.href, location.href).toString(),
-        base,
-        btnName,
-        btnValue,
-        available
-      };
-    }
-
-    async function postAssignNoAdmin(snapshot, loanIds) {
-      if (!snapshot || !loanIds.length) return 0;
-
-      let done = 0;
-      for (let i = 0; i < loanIds.length; i += ASSIGN_CHUNK_SIZE) {
-        const chunk = loanIds.slice(i, i + ASSIGN_CHUNK_SIZE);
-
-        const body = new URLSearchParams(snapshot.base.toString());
-        for (const id of chunk) body.append('processingAdminLoanIds', id);
-        body.append(snapshot.btnName, snapshot.btnValue);
-
-        const resp = await fetch(snapshot.action, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-          body
-        });
-
-        if (!resp.ok) throw new Error(`Assign POST failed (${resp.status})`);
-
-        const html = await resp.text();
-        if (/Validation of viewstate MAC failed|Invalid postback or callback argument/i.test(html)) {
-          throw new Error('Assign POST rejected by server (viewstate/event validation). Regenerate the report and retry.');
-        }
-
-        done += chunk.length;
+      let changed = false;
+      for (let i = 0; i < 70; i++) {
         await sleep(200);
+        const firstAfter = collectLoansFromCurrentView()[0]?.loanId || '';
+        if (firstAfter && firstAfter !== firstBefore) { changed = true; break; }
       }
-      return done;
+      if (!changed) break;
     }
 
-    // -------------------------
-    // Collect across pages + snapshots
-    // -------------------------
-    async function collectAllPages(statusEl) {
-      const all = new Map();
-      const pages = [];
-      let page = 0;
+    return { loans: Array.from(all.values()), pages };
+  }
 
-      while (page < 200) {
-        page++;
+  // =========================================================================
+  // "Assign processing admin"
+  // =========================================================================
+  const NO_ADMIN_VALUE = '0';
 
-        const items = collectLoansFromCurrentView();
-        for (const it of items) if (!all.has(it.loanId)) all.set(it.loanId, it);
+  function buildAssignSnapshot() {
+    const container = qs('#maincontent_Tr_AssignProcessingAdminControls');
+    if (!container) return null;
 
-        const snapshot = buildAssignSnapshot();
-        if (snapshot) pages.push(snapshot);
+    // Same reason as in removeAAForLoan: anchor on the control, not on the
+    // first <form> in the document.
+    const form = container.closest('form') || qs('#Page_Form') || qs('#ctl00');
+    if (!form) return null;
 
-        statusEl.textContent = `Collecting loans… Found ${all.size} (scan page ${page}).`;
+    const select = container.querySelector('select');
+    const btn = container.querySelector('input[type="submit"], input[type="button"], button');
+    if (!select || !btn) return null;
 
-        const next = getPagerNextButton();
-        if (!next) break;
+    const selectName = select.getAttribute('name');
+    const btnName = btn.getAttribute('name');
+    const btnValue = btn.getAttribute('value') || btn.value || 'Update';
+    if (!selectName || !btnName) return null;
+    if (!Array.from(select.options).some((o) => o.value === NO_ADMIN_VALUE)) return null;
 
-        const firstBefore = items[0]?.loanId || '';
-        next.click();
-
-        let changed = false;
-        for (let i = 0; i < 70; i++) {
-          await sleep(200);
-          const now = collectLoansFromCurrentView();
-          const firstAfter = now[0]?.loanId || '';
-          if (firstAfter && firstAfter !== firstBefore) { changed = true; break; }
-        }
-        if (!changed) break;
-      }
-
-      return { loans: Array.from(all.values()), pages };
+    const base = new URLSearchParams();
+    for (const [k, v] of new FormData(form).entries()) {
+      if (typeof v !== 'string') continue;
+      if (/LoanIds$|CustomerIds$/i.test(k)) continue;
+      base.append(k, v);
     }
+    base.set('__EVENTTARGET', '');
+    base.set('__EVENTARGUMENT', '');
+    base.set(selectName, NO_ADMIN_VALUE);
 
-    // -------------------------
-    // EditStatus.aspx POST
-    // -------------------------
-    function findCheckboxByLabelText(doc, labelText) {
-      const labels = Array.from(doc.querySelectorAll('label'));
-      const lbl = labels.find((l) => (l.textContent || '').trim() === labelText);
+    const available = new Set(
+      Array.from(document.querySelectorAll('input[name="processingAdminLoanIds"]')).map((cb) => cb.value)
+    );
 
-      if (lbl) {
-        const forId = lbl.getAttribute('for');
-        if (forId) {
-          const input = doc.getElementById(forId);
-          if (input && input.type === 'checkbox') return input;
-        }
-        const wrapped = lbl.querySelector('input[type="checkbox"]');
-        if (wrapped) return wrapped;
-      }
+    return {
+      action: new URL(form.getAttribute('action') || location.href, location.href).toString(),
+      base, btnName, btnValue, available
+    };
+  }
 
-      const cbs = Array.from(doc.querySelectorAll('input[type="checkbox"]'));
-      for (const cb of cbs) {
-        const t = norm(cb.parentElement?.textContent);
-        if (t === labelText || t.includes(labelText)) return cb;
-      }
+  // A 200 response is not proof of success: a dead ASP.NET session answers
+  // with the login page, and the run would otherwise be counted as OK.
+  //
+  // Reading the RESPONSE BODY for login markers was a mistake: the CRM master
+  // page carries a decoy login form (dummyusername/dummypass, a Safari autofill
+  // workaround) on every single page, so every successful POST looked like a
+  // dead session. Only the response URL is trusted now — a forms-auth timeout
+  // redirects to the login page, and nothing else does.
+  function responseLostSession(resp) {
+    try {
+      return !!(resp && resp.url && /Login(Page)?\.aspx/i.test(resp.url));
+    } catch { return false; }
+  }
 
-      return null;
-    }
+  function fatal(msg) {
+    const e = new Error(msg);
+    e.fatal = true;
+    return e;
+  }
 
-    function findUpdateButton(doc) {
-      const btns = Array.from(doc.querySelectorAll('input[type="submit"], input[type="button"], button'));
-      return btns.find((b) => ((b.value || b.textContent || '').trim().toLowerCase() === 'update')) || null;
-    }
+  async function postAssignNoAdmin(snapshot, loanIds) {
+    if (!snapshot || !loanIds.length) return 0;
 
-    function formDataToUrlEncoded(fd) {
-      const usp = new URLSearchParams();
-      for (const [k, v] of fd.entries()) usp.append(k, v);
-      return usp;
-    }
+    let done = 0;
+    for (let i = 0; i < loanIds.length; i += ASSIGN_CHUNK_SIZE) {
+      const chunk = loanIds.slice(i, i + ASSIGN_CHUNK_SIZE);
 
-    async function postEditStatusForm(frameWin, doc, form, updateBtn, uncheckedCheckbox) {
-      const fd = new FormData(form);
+      const body = new URLSearchParams(snapshot.base.toString());
+      for (const id of chunk) body.append('processingAdminLoanIds', id);
+      body.append(snapshot.btnName, snapshot.btnValue);
 
-      const btnName = updateBtn?.getAttribute('name');
-      const btnVal = updateBtn?.getAttribute('value') || updateBtn?.value || 'Update';
-      if (btnName && !fd.has(btnName)) fd.append(btnName, btnVal);
-
-      if (uncheckedCheckbox && uncheckedCheckbox.name) fd.delete(uncheckedCheckbox.name);
-
-      const actionRaw = (form.getAttribute('action') || '').trim();
-      const actionUrl = new URL(actionRaw || frameWin.location.href, frameWin.location.href).toString();
-
-      const body = formDataToUrlEncoded(fd);
-
-      const resp = await fetch(actionUrl, {
+      const resp = await fetch(snapshot.action, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
         body
       });
+      if (!resp.ok) throw new Error(`Assign POST failed (${resp.status})`);
 
-      if (!resp.ok) throw new Error(`POST failed (${resp.status}) -> ${actionUrl}`);
-      return true;
-    }
-
-    async function removeAAForLoan(frame, loanId) {
-      const url = `/plm.net/customers/EditStatus.aspx?loanid=${loanId}`;
-      await loadInFrame(frame, url);
-
-      const d = frame.contentDocument;
-      const w = frame.contentWindow;
-      if (!d || !w) throw new Error('No iframe content');
-
-      let form = null;
-      let cb = null;
-      for (let i = 0; i < 60; i++) {
-        form = d.querySelector('form');
-        cb = findCheckboxByLabelText(d, STATUS_LABEL_TEXT);
-        if (form && cb) break;
-        await sleep(150);
+      const html = await resp.text();
+      if (responseLostSession(resp)) throw fatal('Session expired — log in again, then re-run.');
+      if (/Validation of viewstate MAC failed|Invalid postback or callback argument/i.test(html)) {
+        throw new Error('Assign POST rejected by server (viewstate). Regenerate the report and retry.');
       }
-      if (!form) throw new Error(`Form not found (loan ${loanId})`);
-      if (!cb) throw new Error(`"${STATUS_LABEL_TEXT}" checkbox not found (loan ${loanId})`);
 
-      if (!cb.checked) return 'already_off';
+      done += chunk.length;
+      await sleep(200);
+    }
+    return done;
+  }
 
-      cb.checked = false;
+  async function assignIds(pages, ids) {
+    let assigned = 0;
+    for (const snap of pages) {
+      const mine = ids.filter((id) => snap.available.has(id));
+      if (mine.length) assigned += await postAssignNoAdmin(snap, mine);
+    }
+    return assigned;
+  }
 
-      const updateBtn = findUpdateButton(d);
-      if (!updateBtn) throw new Error(`Update button not found (loan ${loanId})`);
+  // =========================================================================
+  // EditStatus.aspx
+  // =========================================================================
+  function findCheckboxByLabelText(doc, labelText) {
+    const lbl = Array.from(doc.querySelectorAll('label'))
+      .find((l) => (l.textContent || '').trim() === labelText);
 
-      await postEditStatusForm(w, d, form, updateBtn, cb);
-      return 'removed';
+    if (lbl) {
+      const forId = lbl.getAttribute('for');
+      if (forId) {
+        const input = doc.getElementById(forId);
+        if (input && input.type === 'checkbox') return input;
+      }
+      const wrapped = lbl.querySelector('input[type="checkbox"]');
+      if (wrapped) return wrapped;
     }
 
-    // -------------------------
-    // Run
-    // -------------------------
-    let STOP = false;
-    let RUNNING = false;
-    let DISMISSED = false;
+    for (const cb of Array.from(doc.querySelectorAll('input[type="checkbox"]'))) {
+      const t = norm(cb.parentElement?.textContent);
+      if (t === labelText || t.includes(labelText)) return cb;
+    }
+    return null;
+  }
 
-    async function run(opts, ui) {
-      const { statusEl, errEl, buttons } = ui;
-      const reassign = !!opts.reassign;
+  function findUpdateButton(doc) {
+    return Array.from(doc.querySelectorAll('input[type="submit"], input[type="button"], button'))
+      .find((b) => ((b.value || b.textContent || '').trim().toLowerCase() === 'update')) || null;
+  }
 
-      STOP = false;
-      RUNNING = true;
-      errEl.style.display = 'none';
-      errEl.textContent = '';
-      setButtonsEnabled(false, buttons);
+  async function postEditStatusForm(frameWin, form, updateBtn, uncheckedCheckbox) {
+    const fd = new FormData(form);
 
-      try {
-        statusEl.textContent = 'Collecting loans from report…';
+    const btnName = updateBtn?.getAttribute('name');
+    const btnVal = updateBtn?.getAttribute('value') || updateBtn?.value || 'Update';
+    if (btnName && !fd.has(btnName)) fd.append(btnName, btnVal);
+    if (uncheckedCheckbox && uncheckedCheckbox.name) fd.delete(uncheckedCheckbox.name);
 
-        const { loans: allLoans, pages } = await collectAllPages(statusEl);
+    const actionRaw = (form.getAttribute('action') || '').trim();
+    const actionUrl = new URL(actionRaw || frameWin.location.href, frameWin.location.href).toString();
 
-        if (!allLoans.length) {
-          statusEl.textContent = 'No loans found. (Try: Show all pages + Generate Report)';
-          return;
-        }
+    const usp = new URLSearchParams();
+    for (const [k, v] of fd.entries()) usp.append(k, v);
 
-        if (reassign && !pages.length) {
-          throw new Error('"Assign processing admin" control not found on the page.');
-        }
+    const resp = await fetch(actionUrl, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: usp
+    });
+    if (!resp.ok) throw new Error(`POST failed (${resp.status}) -> ${actionUrl}`);
 
-        const targets = ONLY_ROWS_THAT_CONTAIN_AA_TEXT ? allLoans.filter((x) => x.hasAA) : allLoans;
-        if (!targets.length) {
-          statusEl.textContent = `Loans found: ${allLoans.length}, but none matched AA text. Set ONLY_ROWS_THAT_CONTAIN_AA_TEXT=false to brute-force.`;
-          return;
-        }
+    await resp.text();
+    if (responseLostSession(resp)) throw fatal('Session expired — log in again, then re-run.');
+    return true;
+  }
 
-        const frame = ensureWorkerFrame();
+  async function removeAAForLoan(frame, loanId) {
+    await loadInFrame(frame, `/plm.net/customers/EditStatus.aspx?loanid=${loanId}`);
 
-        let ok = 0, already = 0, fail = 0;
-        const cleared = new Set();
+    const d = frame.contentDocument;
+    const w = frame.contentWindow;
+    if (!d || !w) throw new Error('No iframe content');
 
-        statusEl.textContent = `Starting… Targets: ${targets.length}.`;
+    let form = null, cb = null;
+    for (let i = 0; i < 60; i++) {
+      cb = findCheckboxByLabelText(d, STATUS_LABEL_TEXT);
+      // Take the form that OWNS the checkbox. Never document.querySelector('form'):
+      // the master page puts a decoy login form (dummyusername/dummypass, a Safari
+      // autofill workaround) FIRST in the document, and posting that one would
+      // send no viewstate and change nothing.
+      form = cb ? cb.closest('form') : null;
+      if (form && cb) break;
+      await sleep(150);
+    }
 
-        for (let i = 0; i < targets.length; i++) {
+    if (!form || !cb) {
+      let href = '';
+      try { href = w.location.href || ''; } catch {}
+      if (/Login(Page)?\.aspx/i.test(href)) {
+        throw fatal('Session expired — log in again, then re-run.');
+      }
+      throw new Error(!form ? `Form not found (loan ${loanId})` : `"${STATUS_LABEL_TEXT}" checkbox not found (loan ${loanId})`);
+    }
+
+    if (!cb.checked) return 'already_off';
+    cb.checked = false;
+
+    const updateBtn = findUpdateButton(d);
+    if (!updateBtn) throw new Error(`Update button not found (loan ${loanId})`);
+
+    await postEditStatusForm(w, form, updateBtn, cb);
+    return 'removed';
+  }
+
+  // =========================================================================
+  // Run
+  // =========================================================================
+  async function run(opts) {
+    const reassign = !!opts.reassign;
+    const tag = opts.tag ? `${opts.tag} ` : '';
+    const maxTargets = opts.maxTargets || 0;
+
+    STOP = false;
+    RUNNING = true;
+    setError('');
+    setButtonsEnabled(false);
+
+    try {
+      setStatus(`${tag}Collecting loans from report…`);
+      const { loans: allLoans, pages } = await collectAllPages();
+
+      if (!allLoans.length) {
+        setLastResult('no loans in the report');
+        setStatus('Ready.');
+        return { ok: true };
+      }
+      if (reassign && !pages.length) throw new Error('"Assign processing admin" control not found.');
+
+      const targets = ONLY_ROWS_THAT_CONTAIN_AA_TEXT ? allLoans.filter((x) => x.hasAA) : allLoans;
+      if (!targets.length) {
+        setLastResult(`${allLoans.length} loans, none with AA — nothing to do`);
+        setStatus('Ready.');
+        return { ok: true };
+      }
+
+      if (maxTargets && targets.length > maxTargets) {
+        setLastResult(`REFUSED: ${targets.length} loans > limit ${maxTargets}`);
+        setStatus(`${tag}Refused: ${targets.length} loans exceed the safety limit of ${maxTargets}. Check the filters and run manually.`);
+        setError('Safety fuse tripped — an automatic cycle will not touch this many loans.');
+        return { ok: false };
+      }
+
+      const frame = ensureWorkerFrame();
+      let ok = 0, already = 0, fail = 0, assigned = 0, assignFail = 0;
+      let failed = [];
+
+      // Clear + unassign in interleaved batches, so no loan stays "cleared but
+      // still on AA Bot" for longer than one batch. The counter shown to the
+      // user is the overall position in the run, not the batch's own range —
+      // "(21-22/22)" looked like a bug even though it was correct.
+      let position = 0;
+      let total = targets.length;
+
+      async function processBatch(list, prefix) {
+        const cleared = [];
+
+        for (let i = 0; i < list.length; i++) {
           if (STOP) break;
-
-          const t = targets[i];
-          statusEl.textContent =
-            `(${i + 1}/${targets.length}) ${t.name ? t.name + ' — ' : ''}loan ${t.loanId}… | OK:${ok} Already:${already} Fail:${fail}`;
-
+          const t = list[i];
+          position++;
+          setStatus(`${tag}${prefix}(${position}/${total}) ${t.name ? t.name + ' — ' : ''}loan ${t.loanId}… | OK:${ok} Already:${already} Fail:${fail}${reassign ? ` Unassigned:${assigned}` : ''}`);
           try {
             const res = await removeAAForLoan(frame, t.loanId);
-            if (res === 'already_off') already++;
-            else ok++;
-            cleared.add(t.loanId);
+            if (res === 'already_off') already++; else ok++;
+            cleared.push(t.loanId);
           } catch (e) {
+            if (e.fatal) throw e;
             fail++;
-            errEl.style.display = 'block';
-            errEl.textContent = `Last error: ${e.message || e}`;
-            console.warn('[AA Remove] Failed', t, e);
+            failed.push(t);
+            setError(`Last error: ${e.message || e}`);
+            console.warn('[AA Remove] failed', t, e);
           }
-
           await sleep(PER_LOAN_DELAY_MS);
         }
 
-        const statusPart = STOP
-          ? `Stopped. OK:${ok}, Already:${already}, Failed:${fail}.`
-          : `Statuses done. OK:${ok}, Already:${already}, Failed:${fail}.`;
-
-        if (!reassign) {
-          statusEl.textContent = `${statusPart} Refresh report to verify.`;
-          return;
-        }
-
-        // ---- Step 2: Processing Admin -> "-- no admin --"
-        let assigned = 0;
-        let assignFail = 0;
-
-        for (let p = 0; p < pages.length; p++) {
-          if (STOP) break;
-
-          const snap = pages[p];
-          const ids = Array.from(cleared).filter((id) => snap.available.has(id));
-          if (!ids.length) continue;
-
-          statusEl.textContent = `${statusPart} Reassigning admin… (batch ${p + 1}/${pages.length}, ${ids.length} loans)`;
-
+        if (reassign && cleared.length) {
           try {
-            assigned += await postAssignNoAdmin(snap, ids);
+            assigned += await assignIds(pages, cleared);
           } catch (e) {
-            assignFail += ids.length;
-            errEl.style.display = 'block';
-            errEl.textContent = `Assign error: ${e.message || e}`;
-            console.warn('[AA Remove] Assign failed', e);
+            if (e.fatal) throw e;
+            assignFail += cleared.length;
+            setError(`Assign error: ${e.message || e}`);
+            console.warn('[AA Remove] assign failed', e);
           }
         }
-
-        statusEl.textContent =
-          `${statusPart} Admin set to "no admin": ${assigned}` +
-          (assignFail ? `, failed: ${assignFail}` : '') +
-          `. Refresh report to verify.`;
-      } finally {
-        RUNNING = false;
-        setButtonsEnabled(true, buttons);
       }
-    }
 
-    // -------------------------
-    // Boot
-    // -------------------------
-    if (!isPendingPresetPage()) return;
+      setStatus(`${tag}Starting… Targets: ${targets.length}.`);
 
-    // The panel exists ONLY while the required filters are selected
-    // AND the report on screen was generated with them.
-    let lastHiddenReason = '';
-
-    function ensurePanelVisibility() {
-      if (RUNNING || DISMISSED) return;
-
-      const problems = checkGuards();
-      const ok = problems.length === 0;
-      const panel = qs('#cc-aa-remove-panel');
-
-      if (ok && !panel) createPanel();
-      else if (!ok && panel) panel.remove();
-
-      // No UI noise when hidden — but leave a trace in the console,
-      // so "why is there no panel?" is always answerable.
-      const reason = problems.join(' | ');
-      if (reason !== lastHiddenReason) {
-        lastHiddenReason = reason;
-        if (reason) console.info('[AA Remove] panel hidden:', reason);
+      for (let i = 0; i < targets.length && !STOP; i += INTERLEAVE_SIZE) {
+        await processBatch(targets.slice(i, i + INTERLEAVE_SIZE), '');
       }
+
+      // one retry pass — network hiccups are usually one-off
+      if (!STOP && failed.length) {
+        const retry = failed;
+        failed = [];
+        fail = 0;
+        position = 0;
+        total = retry.length;
+        await processBatch(retry, 'retry ');
+      }
+
+      const failedTotal = fail + (reassign ? assignFail : 0);
+      const summary =
+        `removed AA in progress: ${ok}, already: ${already}` +
+        (reassign ? `, unassigned from AA bot: ${assigned}` : '') +
+        (failedTotal ? `, failed: ${failedTotal}` : '');
+
+      // The summary goes to the "Last:" line only — repeating it in the status
+      // line right above said the same thing twice.
+      setLastResult(`${STOP ? 'stopped — ' : ''}${summary}`);
+      setStatus('Ready.');
+      return { ok: !fail && !assignFail };
+    } finally {
+      RUNNING = false;
+      setLastLine();
+      setButtonsEnabled(true);
     }
+  }
 
-    // On a fresh page load the controls match the report that was rendered.
-    APPLIED_SIG = filterSignature();
-    ensurePanelVisibility();
+  // =========================================================================
+  // Automation cycle
+  // =========================================================================
+  // Three independent signals, because the page may or may not use ASP.NET
+  // AJAX: the authoritative endRequest event, a settled burst of DOM changes,
+  // and a hard timeout as the last resort.
+  function waitForReportRefresh(timeoutMs) {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      let done = false, quietTimer = null, obs = null, prm = null, prmHandler = null;
 
-    document.addEventListener('change', ensurePanelVisibility, true);
+      const finish = (why) => {
+        if (done) return;
+        done = true;
+        clearTimeout(quietTimer);
+        try { if (obs) obs.disconnect(); } catch {}
+        try { if (prm && prmHandler) prm.remove_endRequest(prmHandler); } catch {}
+        resolve(why);
+      };
 
-    document.addEventListener('click', (e) => {
-      // The report stays stale until the new grid actually arrives.
-      if (isGenerateButton(e.target)) GENERATE_PENDING = true;
-      setTimeout(ensurePanelVisibility, 0);
-    }, true);
-
-    // The grid is refreshed by an async postback, so watch the DOM for the
-    // result of a Generate Report instead of waiting for a page reload.
-    let mutationTimer = null;
-    new MutationObserver((records) => {
-      const ours = records.every((r) => {
-        const n = r.target;
-        return n && n.closest && n.closest('#cc-aa-remove-panel');
-      });
-      if (ours) return;
-
-      clearTimeout(mutationTimer);
-      mutationTimer = setTimeout(() => {
-        if (GENERATE_PENDING) {
-          GENERATE_PENDING = false;
-          APPLIED_SIG = filterSignature(); // this filter state is now on screen
+      try {
+        prm = (window.Sys && window.Sys.WebForms && window.Sys.WebForms.PageRequestManager)
+          ? window.Sys.WebForms.PageRequestManager.getInstance() : null;
+        if (prm && prm.add_endRequest) {
+          prmHandler = () => finish('endRequest');
+          prm.add_endRequest(prmHandler);
         }
-        ensurePanelVisibility();
-      }, 300);
-    }).observe(document.body, { childList: true, subtree: true });
+      } catch { prm = null; }
 
-    setInterval(ensurePanelVisibility, 1000);
+      try {
+        obs = new MutationObserver((records) => {
+          if (records.every((r) => r.target && r.target.closest && r.target.closest('#cc-aa-remove-panel-v3'))) return;
+          clearTimeout(quietTimer);
+          quietTimer = setTimeout(function settle() {
+            const wait = GENERATE_MIN_WAIT_MS - (Date.now() - startedAt);
+            if (wait > 0) { quietTimer = setTimeout(settle, wait); return; }
+            finish('dom-settled');
+          }, 1200);
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+      } catch { obs = null; }
+
+      setTimeout(() => finish('timeout'), timeoutMs);
+    });
+  }
+
+  const RESUME_KEY = 'cc_aa3_resume_after_generate';
+  const RESUME_WINDOW_MS = 90000;
+
+  function markResumePoint() {
+    try { sessionStorage.setItem(RESUME_KEY, String(Date.now())); } catch {}
+  }
+  function takeResumePoint() {
+    let v = 0;
+    try {
+      v = parseInt(sessionStorage.getItem(RESUME_KEY) || '0', 10) || 0;
+      sessionStorage.removeItem(RESUME_KEY);
+    } catch {}
+    return v;
+  }
+
+  async function pressGenerateReport() {
+    const btn = findGenerateButton();
+    if (!btn) throw new Error('"Generate Report" button not found on the page.');
+
+    setStatus('Auto: pressing Generate Report…');
+    trace('pressing Generate Report');
+
+    // Generate Report is a full ASP.NET postback on this page: it can reload
+    // the document and kill this cycle mid-flight. The marker lets THIS tab
+    // finish the cleanup after the reload.
+    markResumePoint();
+
+    const rowsBefore = countLoanRows();
+    GENERATE_PENDING = true;
+    const settled = waitForReportRefresh(GENERATE_WAIT_MS);
+    btn.click();
+    const why = await settled;
+    await sleep(GENERATE_SETTLE_MS);
+
+    GENERATE_PENDING = false;
+    await rebaseSignatureWhenReady(8000);
+    takeResumePoint();          // the page survived — nothing to resume
+    trace(`Generate Report settled via ${why}; rows ${rowsBefore} -> ${countLoanRows()}`);
+  }
+
+  // The filter block is re-rendered by every postback, so right after a
+  // Generate Report reload it can be missing for a second or two. Declaring
+  // "filters not set" at that instant was wrong.
+  async function waitForFilters(timeoutMs) {
+    const until = Date.now() + timeoutMs;
+
+    // A page that is still loading has no filter block yet, and a verdict
+    // taken then says nothing about what the user selected.
+    while (Date.now() < until && document.readyState !== 'complete') await sleep(300);
+
+    let last = 'unknown';
+    while (Date.now() < until) {
+      last = filtersState();
+      if (last === 'ok') return 'ok';
+      await sleep(400);
+    }
+    return filtersState();
+  }
+
+  async function runAutoCycle(skipGenerate) {
+    if (RUNNING || AUTO_BUSY) return;
+
+    // A cycle simply does not run unless the filters are right. It never
+    // disarms the automation — that is the user's call, or the N-hour timer's.
+    const fState = await waitForFilters(FILTER_WAIT_MS);
+    if (fState !== 'ok') {
+      trace('cycle skipped —', filtersDetail());
+      // "unknown" means the page never finished rendering — saying "filters
+      // not set" there blamed the user for the page being slow.
+      setLastResult(fState === 'unknown'
+        ? 'skipped — page was still loading, will retry'
+        : `skipped — ${!isAAInProgressYes() ? 'AA In Progress is not set to "Yes"'
+            : 'Processing Admin is not "-- All Admins --"'}`);
+      setLastLine();
+      rearm();            // next slot, same cadence — never a shortened retry
+      paint();
+      return;
+    }
+
+    createPanel();
+    AUTO_BUSY = true;
+    STOP = false;
+    setError('');
+    paint();
+
+    let good = false;
+    try {
+      if (!skipGenerate) await pressGenerateReport();
+
+      const verdict = gridVerdict();
+      trace('grid verdict after generate:', verdict, 'rows:', countLoanRows());
+
+      if (verdict === 'unknown') {
+        setLastResult('report came back empty — nothing to clean');
+        setStatus('Ready.');
+        good = true;
+      } else if (verdict === 'wrong') {
+        setLastResult('report was not AA-filtered — skipped');
+        setStatus('Ready.');
+      } else {
+        const res = await run({ reassign: true, tag: 'Auto:', maxTargets: MAX_TARGETS_AUTO });
+        good = !!(res && res.ok);
+      }
+    } catch (e) {
+      console.error('[AA Remove] auto cycle failed', e);
+      setError(`Auto error: ${e.message || e}`);
+      setStatus(e.fatal ? 'Auto: session lost — log in again.' : 'Auto: cycle failed.');
+      setLastResult(`error: ${e.message || e}`);
+      // deliberately NOT switching automation off — the next cycle retries
+    } finally {
+      takeResumePoint();
+      AUTO_BUSY = false;
+      RUNNING = false;
+      rearm();
+      setLastLine();
+      paint();
+      trace('cycle finished; next at', hhmm(nextRunAt()));
+    }
+  }
+
+  function autoTick() {
+    if (!autoEnabled() || RUNNING || AUTO_BUSY) return;
+
+    const offAt = autoOffAt();
+    const armedFor = Date.now() - armedAt();
+
+    // The grace window means a stale or unwritable "armed at" stamp can no
+    // longer disarm automation in the same second it was switched on.
+    if (offAt && armedFor > OFF_TIMER_GRACE_MS && Date.now() >= offAt) {
+      setAutoEnabled(false, `${autoOffHours()} h timer`);
+      syncControls();
+      setLastResult(`switched off after ${autoOffHours()} h`);
+      setStatus(`Auto switched off after ${autoOffHours()} h.`);
+      setLastLine();
+      paint();
+      return;
+    }
+
+    const due = nextRunAt();
+    if (!due) { rearm(); return; }
+    if (Date.now() < due) return;
+
+    // A cycle that came due while the page was reloading waits for the page to
+    // settle instead of firing into a half-rendered document and skipping.
+    if (Date.now() - PAGE_LOADED_AT < BOOT_SETTLE_MS) return;
+
+    runAutoCycle(false);
+  }
+
+  // =========================================================================
+  // Boot
+  // =========================================================================
+  if (!isPendingPresetPage()) return;
+
+  // The panel exists exactly while both filters are selected — nothing else
+  // makes it appear or disappear. Whether the list on screen is usable only
+  // controls whether the buttons are clickable.
+  function ensurePanelVisibility() {
+    if (RUNNING || AUTO_BUSY) { paint(); return; }
+
+    const st = filtersState();
+
+    // Controls not readable at this instant — say nothing, change nothing.
+    if (st === 'unknown') { paint(); return; }
+
+    if (st === 'ok') { createPanel(); syncControls(); }
+    else removePanel();
+    paint();
+  }
+
+  APPLIED_SIG = filterSignature();
+  if (!signatureComplete(APPLIED_SIG)) APPLIED_SIG = null;  // re-baseline once it renders
+
+  // Automation that was left on gets a fresh switch-off clock on every page
+  // load, so a reload can never land past the old deadline and disarm itself.
+  if (autoEnabled()) {
+    if (!armedAt() || Date.now() - armedAt() > autoOffHours() * 3600000) reArmClock();
+
+    // The countdown survives a reload. It is only restarted when there is
+    // nothing sane to continue: no stored time, or one further away than a
+    // whole interval (left over from a longer interval setting).
+    const restored = nextRunAt();
+    if (!restored || restored > Date.now() + autoMinutes() * 60000 + 60000) rearm();
+    else trace('countdown restored — next run at', hhmm(restored));
+  }
+
+  // Two copies of this userscript installed at once share one localStorage and
+  // both act on the page, which looks exactly like the script misbehaving.
+  // Each copy announces itself here, and a copy that sees a different version
+  // says so instead of leaving the user to guess.
+  // Nothing in THIS version ever writes the keys below — they belong to older
+  // builds. So a write to one of them proves another script is running in this
+  // tab, and the stack trace names it. Guessing which script it is from the
+  // outside is hopeless; the stack is not.
+  const FOREIGN_KEYS = [
+    'cc_aa2_auto_next', 'cc_aa2_last', 'cc_aa2_auto_on', 'cc_aa2_auto_stage',
+    'cc_aa_auto_next', 'cc_aa_last', 'cc_aa_auto_on', 'cc_aa_auto_stage'
+  ];
+
+  let FOREIGN_HIT = null;
+
+  (function watchForeignWrites() {
+    try {
+      const orig = Storage.prototype.setItem;
+      if (orig.__ccAaPatched) return;
+
+      const patched = function (key, value) {
+        try {
+          if (this === window.localStorage && FOREIGN_KEYS.indexOf(key) !== -1) {
+            FOREIGN_HIT = { key, value, at: Date.now() };
+            console.warn(
+              `[AA Remove] ANOTHER script wrote "${key}" = ${value}\n` +
+              'The stack below names it — look for a file or userscript that is not ' +
+              `AA In Progress Bulk Cleanup v${VERSION}:\n` +
+              (new Error('foreign localStorage write').stack || '(no stack available)')
+            );
+          }
+        } catch {}
+        return orig.apply(this, arguments);
+      };
+
+      patched.__ccAaPatched = true;
+      Storage.prototype.setItem = patched;
+      trace('watching for writes from other copies');
+    } catch (e) {
+      trace('could not install the foreign-write watcher', e);
+    }
+  })();
+
+  setInterval(() => {
+    if (!FOREIGN_HIT || !UI || !UI.warnEl) return;
+    UI.warnEl.style.display = 'block';
+    UI.warnEl.textContent =
+      `Another script in this tab is writing "${FOREIGN_HIT.key}" (last at ` +
+      `${hhmm(FOREIGN_HIT.at)}). Open the console with F12 — the warning there ` +
+      'shows which script it is.';
+  }, 4000);
+
+  ensurePanelVisibility();
+
+  // A page load starts a cycle in exactly one case: THIS tab pressed Generate
+  // Report a moment ago as part of a cycle and the postback reloaded the page
+  // out from under it. The marker lives in sessionStorage, so no other tab and
+  // no older copy of the script can trigger this.
+  (function resumeOwnCycle() {
+    const stamp = takeResumePoint();
+    if (!stamp || !autoEnabled()) return;
+    if (Date.now() - stamp > RESUME_WINDOW_MS) return;
+    trace('finishing the cycle interrupted by the Generate Report postback');
+    setTimeout(() => runAutoCycle(true), BOOT_SETTLE_MS);
+  })();
+
+  // Events coming from inside our own panel are never a filter change. Letting
+  // them through meant a click on the Auto toggle ran the capture-phase
+  // handler first, which could tear the panel down mid-dispatch.
+  const fromOwnPanel = (e) => {
+    const t = e.target;
+    return !!(t && t.closest && t.closest('#cc-aa-remove-panel-v3'));
+  };
+
+  document.addEventListener('change', (e) => {
+    if (fromOwnPanel(e)) return;
+    ensurePanelVisibility();
+  }, true);
+
+  document.addEventListener('click', (e) => {
+    if (fromOwnPanel(e)) return;
+    if (isGenerateButton(e.target)) GENERATE_PENDING = true;
+    setTimeout(ensurePanelVisibility, 0);
+  }, true);
+
+  let mutationTimer = null;
+  new MutationObserver((records) => {
+    if (records.every((r) => r.target && r.target.closest && r.target.closest('#cc-aa-remove-panel-v3'))) return;
+    clearTimeout(mutationTimer);
+    mutationTimer = setTimeout(() => {
+      if (GENERATE_PENDING && rebaseSignature()) {
+        GENERATE_PENDING = false;
+      }
+      ensurePanelVisibility();
+    }, 300);
+  }).observe(document.body, { childList: true, subtree: true });
+
+  setInterval(ensurePanelVisibility, 1000);
+  setInterval(autoTick, AUTO_TICK_MS);
+
+  trace(`ready, auto ${autoEnabled() ? 'ON' : 'off'}, storage ${STORE.healthy ? 'ok' : 'BLOCKED'}`);
   });
 
 
