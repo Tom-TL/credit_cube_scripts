@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.3.1
+// @version      1.3.2
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,11 +82,11 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.3.1';
+  const SCRIPT_VERSION = '1.3.2';
   const CHANGELOG = [
 
-    { version: '1.3.1', date: '11/04/2026', changes: [
-        { script: 'Processing Admin Quick Search', text: 'Fixed: the "no admin" option was missing from the suggestions. It is back at the top of the list; typing "none" or "no admin" and pressing Set also clears the Processing Admin.' },
+    { version: '1.3.2', date: '11/04/2026', changes: [
+        { script: 'Processing Admin Quick Search', text: 'Fixed: "-- Select Admin --" (removes the Processing Admin) was missing from the suggestions. It is back at the top of the list; typing "none" or "no admin" and pressing Set does the same.' },
     ]},
 
     { version: '1.3.0', date: '11/04/2026', changes: [
@@ -1713,7 +1713,7 @@ function deactivateMenu() {
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('paQuickSearch')) runScript('paQuickSearch', function () {
     (function () {
-      // Synced with standalone Processing Admin Quick Search v3.3.
+      // Synced with standalone Processing Admin Quick Search v3.4.
       // Only the customer page has the Processing Admin field.
       if (!/CustomerDetails\.aspx/i.test(location.pathname)) return;
 
@@ -1907,9 +1907,10 @@ function deactivateMenu() {
                         .replace(/</g,'&lt;').replace(/>/g,'&gt;');
       }
 
-      // The "no admin" entry of the LMS dropdown, e.g. "-- None --" or "No Admin".
+      // The "no admin" entry of the LMS dropdown: "-- Select Admin --".
+      // Picking it removes the Processing Admin. Typing "none" / "no admin" works too.
       // It must stay selectable even though other "-- ... --" lines are hidden.
-      const NO_ADMIN_RE = /^-*\s*(no admin|none|no one|nobody|not assigned|unassigned)\s*-*$/i;
+      const NO_ADMIN_RE = /^-*\s*(select admin|no admin|none|no one|nobody|not assigned|unassigned)\s*-*$/i;
       const isNoAdmin = n => NO_ADMIN_RE.test((n || '').trim());
 
       // Drops the blacklist, the "-- ... --" separators and empty entries,
