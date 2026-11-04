@@ -2,8 +2,8 @@
 // @name         Processing Admin Quick Search
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      2.6
-// @description  Qucik admin search field next to Processing Admin
+// @version      3.1
+// @description  Quick admin search field next to Processing Admin
 // @match        *://apply.creditcube.com/plm.net/*CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
 // @updateURL    https://raw.githubusercontent.com/Tom-TL/credit_cube_scripts/main/Processing_Admin_Quick_Search.user.js
@@ -18,30 +18,49 @@
 
   /* ===============================================================
      CONFIG
+
+     ADMIN_BLACKLIST = the ONLY names hidden from the suggestions.
+     Everything else that exists in the LMS is shown, including
+     admins created later — the list is re-read from the server
+     automatically (see REFRESH_AFTER_MS).
+
+     Names are compared case-insensitively and extra spaces are
+     ignored, so "Millie  Cross" matches "millie cross".
   =============================================================== */
 
- const ADMIN_BLACKLIST = new Set([
-        "ihor baa","igor ba","brian gonen","sean gonen","shahaf lavi","jerry mcfly","adam mcgee",
-        "liam moss portfolio","roman r","kyle samuel","mike stadnyk","alex vysotzky",
-        "jessica woods","nicole lennon","zhanna yakymenko","enrique martinez",
-        "helen o'riley","tim smith","trysha smith","stephanie bellar","yuliia b",
-        "teddy buckland","daisy clark","abby buentipo","leon collins","millie cross",
-        "kevin ericson","luna garcia","mark davidson","molly green","craig greenberg","randy felix",
-        "george c","mia crosswire","nadezhda k","chris turk","jacob james","max williams","melanie williams",
-        "-- corporate --","-- creditcube --","-- creditcube / creditcube --","-- creditcube / test store --",
-        "marketing m","test admin","aa bot","voicebot voiso","teststore user",
-        "true accord","ccg collections","rsc collections",
-        "iryna stadnyk_realstore","oleksii suprun_realstore","donald white_realstore",
-        "iryna stadnyk","oleksii suprun","donald white",
-        "viktoriia artomtseva","miguel gordon","yauhenia h","yurii holskyi","vitalii k",
-        "oleksandr pilyugin","alex voloshyn","raman vysotski", "oleksandr bilokrynytskyi", "anthony smith", "yulia kalashnykov", "serhii bruh" 
-      ]);
+  const ADMIN_BLACKLIST = new Set([
+    // Hidden from the Processing Admin suggestions.
+    "ihor baa","igor ba","brian gonen","sean gonen",
+    "shahaf lavi","jerry mcfly","adam mcgee","liam moss portfolio",
+    "roman r","kyle samuel","mike stadnyk","alex vysotzky",
+    "jessica woods","nicole lennon","zhanna yakymenko","enrique martinez",
+    "helen o'riley","tim smith","trysha smith","stephanie bellar",
+    "yuliia b","teddy buckland","daisy clark","abby buentipo",
+    "leon collins","millie cross","kevin ericson","luna garcia",
+    "mark davidson","molly green","craig greenberg","randy felix",
+    "george c","mia crosswire","nadezhda k","chris turk",
+    "jacob james","max williams","melanie williams","marketing m",
+    "test admin","aa bot","voicebot voiso","teststore user",
+    "true accord","ccg collections","rsc collections","iryna stadnyk_realstore",
+    "oleksii suprun_realstore","donald white_realstore","iryna stadnyk","oleksii suprun",
+    "donald white","viktoriia artomtseva","miguel gordon","yauhenia h",
+    "yurii holskyi","vitalii k","oleksandr pilyugin","alex voloshyn",
+    "raman vysotski","oleksandr bilokrynytskyi","anthony smith","yulia kalashnykov",
+    "serhii bruh","bankruptcy admin","bk admin","deletecust admin",
+    "chloe maison collections","liam moss collections","andrew ferguson drs","automatic payment plan bot",
+    "marketing_walter m_miller"
+  ]);
 
-  const HOST_ID   = 'cc-pa-host';
-  const CSS_ID    = 'cc-pa-css';
-  const DLIST_ID  = 'cc-pa-datalist';
-  const IFRAME_ID = 'cc-pa-iframe';
-  const CACHE_KEY = 'cc_pa_admin_cache_v2.4';
+  const HOST_ID        = 'cc-pa-host';
+  const CSS_ID         = 'cc-pa-css';
+  const DLIST_ID       = 'cc-pa-datalist';
+  const IFRAME_ID      = 'cc-pa-iframe';       // reads the admin list
+  const IFRAME_SAVE_ID = 'cc-pa-iframe-save';  // submits the change
+  const CACHE_KEY      = 'cc_pa_admin_cache_v3';
+
+  // The cached list is shown instantly, then silently refreshed when it is
+  // older than this, so newly created admins turn up on their own.
+  const REFRESH_AFTER_MS = 30 * 60 * 1000; // 30 minutes
 
   /* ===============================================================
      STATE
@@ -186,8 +205,11 @@
                     .replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  // Drops the blacklist, the "-- ... --" separators and empty entries,
+  // then de-duplicates and sorts. Applied to fresh AND cached data.
   function normalizeNames(raw) {
-    let arr = raw.map(n => (n||'').trim()).filter(Boolean)
+    let arr = raw.map(n => (n || '').trim()).filter(Boolean)
+                 .filter(n => !/^--.*--$/.test(n.trim()))
                  .filter(n => !ADMIN_BLACKLIST.has(norm(n)));
     const seen = new Set();
     arr = arr.filter(n => { const k = norm(n); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -196,14 +218,14 @@
   }
 
   /* ===============================================================
-     HIDDEN IFRAME — used for BOTH loading options AND saving
+     HIDDEN IFRAMES — one reads the list, one performs the save
   =============================================================== */
 
-  function getOrCreateIframe() {
-    let f = $('#' + IFRAME_ID);
+  function getOrCreateIframe(id = IFRAME_ID) {
+    let f = $('#' + id);
     if (!f) {
       f = document.createElement('iframe');
-      f.id = IFRAME_ID;
+      f.id = id;
       f.style.cssText = 'display:none !important; width:0; height:0; border:0; position:fixed; top:-9999px; left:-9999px;';
       document.body.appendChild(f);
     }
@@ -211,12 +233,11 @@
   }
 
   /**
-   * Load the EditProcessingAdmin page in a hidden iframe and return
-   * a Promise<{doc, sel, btn}> resolving when the form is ready.
+   * Load EditProcessingAdmin.aspx in a hidden iframe and resolve with the form parts.
    */
-  function loadIframePage(loanId) {
+  function loadIframePage(loanId, iframeId = IFRAME_ID) {
     return new Promise((resolve, reject) => {
-      const iframe = getOrCreateIframe();
+      const iframe = getOrCreateIframe(iframeId);
       const url = `EditProcessingAdmin.aspx?loanid=${loanId}`;
       let settled = false;
 
@@ -224,11 +245,11 @@
         if (!settled) { settled = true; reject(new Error('iframe load timeout')); }
       }, 15000);
 
-      function onLoad() {
+      iframe.onload = function onLoad() {
         if (settled) return;
         try {
           const doc = iframe.contentDocument || iframe.contentWindow.document;
-          // Check if we got redirected to ClosePopup (means already submitted)
+          // Redirected to ClosePopup => already submitted
           if (doc.location.href.includes('ClosePopup')) {
             settled = true; clearTimeout(timeout);
             resolve({ closed: true });
@@ -240,7 +261,6 @@
             settled = true; clearTimeout(timeout);
             resolve({ doc, sel, btn, iframe, win: iframe.contentWindow });
           } else {
-            // Page loaded but form not found — might be an error page
             settled = true; clearTimeout(timeout);
             reject(new Error('Form not found in iframe'));
           }
@@ -248,45 +268,63 @@
           settled = true; clearTimeout(timeout);
           reject(e);
         }
-      }
+      };
 
-      iframe.onload = onLoad;
       iframe.src = url;
     });
   }
 
   /* ===============================================================
-     LOAD ADMIN LIST
+     ADMIN LIST — cache for speed, server for freshness
   =============================================================== */
 
-  async function ensureAdminList(loanId) {
-    if (loadState === 'done') return;
-    if (loadState === 'loading') return;
-    loadState = 'loading';
-
-    // Try cache first
+  // Cache format: { ts: <epoch ms>, names: [...] }
+  function readCache() {
     try {
       const raw = localStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        adminNames = parsed;
-        fillDatalist(adminNames);
-        loadState = 'done';
-        return;
-      }
-    } catch { localStorage.removeItem(CACHE_KEY); }
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (Array.isArray(obj)) return { ts: 0, names: obj };          // legacy
+      if (obj && Array.isArray(obj.names)) return { ts: obj.ts || 0, names: obj.names };
+    } catch { /* fall through */ }
+    localStorage.removeItem(CACHE_KEY);
+    return null;
+  }
 
-    // Load from page in hidden iframe
+  function writeCache(names) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), names }));
+    } catch { /* quota — not fatal */ }
+  }
+
+  async function ensureAdminList(loanId) {
+    if (loadState === 'loading') return;
+
+    // 1) Paint from cache immediately. The blacklist is re-applied every
+    //    time, so editing ADMIN_BLACKLIST works without clearing storage.
+    const cached = readCache();
+    if (cached) {
+      adminNames = normalizeNames(cached.names);
+      fillDatalist(adminNames);
+      loadState = 'done';
+      if (Date.now() - cached.ts < REFRESH_AFTER_MS) return; // still fresh
+    }
+
+    // 2) Re-read from the server so new admins appear by themselves.
+    loadState = 'loading';
     try {
       const { sel } = await loadIframePage(loanId);
-      const names = normalizeNames([...sel.options].map(o => o.textContent.trim()));
-      adminNames = names;
-      fillDatalist(adminNames);
-      localStorage.setItem(CACHE_KEY, JSON.stringify(adminNames));
+      const raw   = [...sel.options].map(o => o.textContent.trim());
+      const fresh = normalizeNames(raw);
+      if (fresh.length) {
+        adminNames = fresh;
+        fillDatalist(adminNames);
+        writeCache(raw);   // store RAW so blacklist edits apply retroactively
+      }
       loadState = 'done';
     } catch (e) {
-      console.warn('[CC-PA] Failed to load admin list:', e);
-      loadState = 'idle'; // allow retry
+      console.warn('[CC-PA] Failed to refresh admin list:', e);
+      loadState = cached ? 'done' : 'idle';   // keep cache, retry if we had none
     }
   }
 
@@ -301,24 +339,30 @@
     btnSet.textContent = '…';
 
     try {
-      // Step 1: load the form
-      const result = await loadIframePage(loanId);
+      // Step 1: load the form (own iframe, so a background refresh can't clash)
+      const result = await loadIframePage(loanId, IFRAME_SAVE_ID);
       if (result.closed) throw new Error('Unexpected ClosePopup on load');
 
-      const { doc, sel, btn, win } = result;
+      const { sel, btn, win } = result;
 
-      // Step 2: find the option
+      // Step 2: find the option — exact match first, then unique prefix match
       const wanted = norm(name);
-      const opt = [...sel.options].find(o => norm(o.textContent) === wanted);
+      const opts = [...sel.options].filter(o => o.value);
+      let opt = opts.find(o => norm(o.textContent) === wanted);
+      if (!opt) {
+        const partial = opts.filter(o => norm(o.textContent).startsWith(wanted));
+        if (partial.length === 1) opt = partial[0];
+        else if (partial.length > 1) throw new Error(`"${name}" is ambiguous`);
+      }
       if (!opt) throw new Error(`Admin "${name}" not found in list`);
 
       // Step 3: select it
       sel.value = opt.value;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
 
-      // Step 4: submit and wait for the response page (ClosePopup or same page)
+      // Step 4: submit and wait for the response page
       await new Promise((resolve, reject) => {
-        const iframe = getOrCreateIframe();
+        const iframe = getOrCreateIframe(IFRAME_SAVE_ID);
         let settled = false;
 
         const timeout = setTimeout(() => {
@@ -327,16 +371,11 @@
 
         iframe.onload = () => {
           if (settled) return;
-          try {
-            const d = iframe.contentDocument || iframe.contentWindow.document;
-            // Any navigation after submit = success
-            settled = true;
-            clearTimeout(timeout);
-            resolve();
-          } catch { settled = true; clearTimeout(timeout); resolve(); }
+          settled = true;
+          clearTimeout(timeout);
+          resolve();   // any navigation after submit = done
         };
 
-        // Use __doPostBack if available, otherwise click
         const onclick = btn.getAttribute('onclick') || '';
         const m = onclick.match(/__doPostBack\('([^']+)','([^']*)'\)/);
         if (m && typeof win.__doPostBack === 'function') {
@@ -346,9 +385,9 @@
         }
       });
 
-      // Step 5: disconnect observer (prevents double-reload race), then reload once
+      // Step 5: stop the observer (prevents a double-reload race), then reload
       btnSet.textContent = '✓';
-      observer.disconnect();
+      if (observer) observer.disconnect();
       await sleep(400);
       location.reload();
 
@@ -366,7 +405,6 @@
 
   /* ===============================================================
      UI INJECTION
-     Widget is injected BEFORE the text content of the value <td>
   =============================================================== */
 
   function tryInject() {
@@ -381,12 +419,10 @@
     const labelCell = getLabelCell(anchor);
     if (!labelCell) return;
 
-    // If host already lives inside this exact cell → nothing to do
+    // Already injected in this exact cell → nothing to do
     const existing = $('#' + HOST_ID);
     if (existing && labelCell.contains(existing)) return;
-
-    // Remove stale/orphaned host
-    if (existing) existing.remove();
+    if (existing) existing.remove();   // stale/orphaned host
 
     /* ---------- build widget ---------- */
     const host = document.createElement('span');
@@ -411,15 +447,13 @@
     host.appendChild(btnSet);
     host.appendChild(btnClear);
 
-    /* ---------- append widget after the anchor link, no style changes to td ---------- */
     labelCell.appendChild(host);
 
     /* ---------- events ---------- */
     btnSet.addEventListener('click', () => {
       const val = input.value.trim();
       if (!val) return;
-      const a = getAnchor();
-      const id = getLoanId(a);
+      const id = getLoanId(getAnchor());
       if (!id) return;
       setAdmin(id, val, btnSet);
     });
@@ -435,12 +469,9 @@
       if (e.key === 'Enter') { e.preventDefault(); btnSet.click(); }
     });
 
-    input.addEventListener('focus', () => {
-      ensureAdminList(loanId);
-    });
+    input.addEventListener('focus', () => ensureAdminList(loanId));
 
-    /* ---------- kick off background preload ---------- */
-    ensureAdminList(loanId);
+    ensureAdminList(loanId);   // background preload
   }
 
   /* ===============================================================
@@ -449,7 +480,8 @@
 
   injectCSS();
   ensureDatalist();
-  getOrCreateIframe();   // pre-create so it's in the DOM
+  getOrCreateIframe(IFRAME_ID);
+  getOrCreateIframe(IFRAME_SAVE_ID);
 
   // MutationObserver with debounce — re-injects after every AJAX refresh
   let debounceTimer = null;
@@ -465,4 +497,3 @@
   setTimeout(tryInject, 3500);
 
 })();
-
