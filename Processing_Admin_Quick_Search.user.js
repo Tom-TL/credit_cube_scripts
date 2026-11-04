@@ -2,7 +2,7 @@
 // @name         Processing Admin Quick Search
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      3.2
+// @version      3.3
 // @description  Quick admin search field next to Processing Admin
 // @match        *://apply.creditcube.com/plm.net/*CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
@@ -206,15 +206,22 @@
                     .replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  // The "no admin" entry of the LMS dropdown, e.g. "-- None --" or "No Admin".
+  // It must stay selectable even though other "-- ... --" lines are hidden.
+  const NO_ADMIN_RE = /^-*\s*(no admin|none|no one|nobody|not assigned|unassigned)\s*-*$/i;
+  const isNoAdmin = n => NO_ADMIN_RE.test((n || '').trim());
+
   // Drops the blacklist, the "-- ... --" separators and empty entries,
-  // then de-duplicates and sorts. Applied to fresh AND cached data.
+  // then de-duplicates and sorts (the "no admin" entry goes first).
+  // Applied to fresh AND cached data.
   function normalizeNames(raw) {
     let arr = raw.map(n => (n || '').trim()).filter(Boolean)
-                 .filter(n => !/^--.*--$/.test(n.trim()))
+                 .filter(n => isNoAdmin(n) || !/^--.*--$/.test(n))
                  .filter(n => !ADMIN_BLACKLIST.has(norm(n)));
     const seen = new Set();
     arr = arr.filter(n => { const k = norm(n); if (seen.has(k)) return false; seen.add(k); return true; });
-    arr.sort((a,b) => a.localeCompare(b,'en',{sensitivity:'base'}));
+    arr.sort((a,b) => (isNoAdmin(b) - isNoAdmin(a)) ||
+                      a.localeCompare(b,'en',{sensitivity:'base'}));
     return arr;
   }
 
@@ -346,10 +353,13 @@
 
       const { sel, btn, win } = result;
 
-      // Step 2: find the option — exact match first, then unique prefix match
+      // Step 2: find the option — "no admin" first, then exact match,
+      //         then unique prefix match
       const wanted = norm(name);
-      const opts = [...sel.options].filter(o => o.value);
-      let opt = opts.find(o => norm(o.textContent) === wanted);
+      const all  = [...sel.options];
+      const opts = all.filter(o => o.value);
+      let opt = isNoAdmin(name) ? all.find(o => isNoAdmin(o.textContent)) : null;
+      if (!opt) opt = all.find(o => norm(o.textContent) === wanted);
       if (!opt) {
         const partial = opts.filter(o => norm(o.textContent).startsWith(wanted));
         if (partial.length === 1) opt = partial[0];
