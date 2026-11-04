@@ -2,7 +2,7 @@
 // @name         Processing Admin Quick Search
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      3.1
+// @version      3.2
 // @description  Quick admin search field next to Processing Admin
 // @match        *://apply.creditcube.com/plm.net/*CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
@@ -28,7 +28,7 @@
      ignored, so "Millie  Cross" matches "millie cross".
   =============================================================== */
 
-  const ADMIN_BLACKLIST = new Set([
+   const ADMIN_BLACKLIST = new Set([
     // Hidden from the Processing Admin suggestions.
     "ihor baa","igor ba","brian gonen","sean gonen",
     "shahaf lavi","jerry mcfly","adam mcgee","liam moss portfolio",
@@ -48,7 +48,8 @@
     "raman vysotski","oleksandr bilokrynytskyi","anthony smith","yulia kalashnykov",
     "serhii bruh","bankruptcy admin","bk admin","deletecust admin",
     "chloe maison collections","liam moss collections","andrew ferguson drs","automatic payment plan bot",
-    "marketing_walter m_miller"
+    "marketing_walter m_miller","darwin kennedy","helga miller","william brightwell",
+    "sandra wells","roy hadad","olivia bloom","michael goggins"
   ]);
 
   const HOST_ID        = 'cc-pa-host';
