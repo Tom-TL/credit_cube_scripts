@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LMS Assistant PRO for TLs
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      1.3.0
+// @version      1.3.1
 // @description  Unified TL toolkit for CreditCube LMS — toggleable bundle of 12 helper scripts (DC Quick Comments, Reversed Loan, Docs Status Checker, Last Agent Note, Processing Admin Quick Search, TBW Assistant, TBW TL Helper, PIF DC Helper, Bulk Open Tabs, AA Bulk Cleanup, Compact Denial List, Auto-Assign).
 // @author       Tom Harris
 // @match        *://apply.creditcube.com/plm.net/*
@@ -82,8 +82,12 @@
   // ║  Use script: 'UI' for general UI/framework changes,                    ║
   // ║      script: 'All' for module-wide changes.                            ║
   // ╚═════════════════════════════════════════════════════════════════════════╝
-  const SCRIPT_VERSION = '1.3.0';
+  const SCRIPT_VERSION = '1.3.1';
   const CHANGELOG = [
+
+    { version: '1.3.1', date: '11/04/2026', changes: [
+        { script: 'Processing Admin Quick Search', text: 'Fixed: the "no admin" option was missing from the suggestions. It is back at the top of the list; typing "none" or "no admin" and pressing Set also clears the Processing Admin.' },
+    ]},
 
     { version: '1.3.0', date: '11/04/2026', changes: [
         { script: 'Processing Admin Quick Search', text: 'Updated to standalone v3.2 logic: the admin list refreshes from the server every 30 minutes, so new admins appear on their own; blacklist edits apply instantly without clearing the cache; extended blacklist (incl. Darwin Kennedy, Helga Miller, William Brightwell, Sandra Wells, Roy Hadad, Olivia Bloom, Michael Goggins); fixed occasional ✗/timeout when pressing Set while the list was still loading; typing the start of a name now works if it matches only one admin; browser input history no longer covers the suggestions. Runs only on the customer page.' },
@@ -1709,7 +1713,7 @@ function deactivateMenu() {
   // ─────────────────────────────────────────────────────────────────────────────
   if (shouldRun('paQuickSearch')) runScript('paQuickSearch', function () {
     (function () {
-      // Synced with standalone Processing Admin Quick Search v3.2.
+      // Synced with standalone Processing Admin Quick Search v3.3.
       // Only the customer page has the Processing Admin field.
       if (!/CustomerDetails\.aspx/i.test(location.pathname)) return;
 
@@ -1903,15 +1907,22 @@ function deactivateMenu() {
                         .replace(/</g,'&lt;').replace(/>/g,'&gt;');
       }
 
+      // The "no admin" entry of the LMS dropdown, e.g. "-- None --" or "No Admin".
+      // It must stay selectable even though other "-- ... --" lines are hidden.
+      const NO_ADMIN_RE = /^-*\s*(no admin|none|no one|nobody|not assigned|unassigned)\s*-*$/i;
+      const isNoAdmin = n => NO_ADMIN_RE.test((n || '').trim());
+
       // Drops the blacklist, the "-- ... --" separators and empty entries,
-      // then de-duplicates and sorts. Applied to fresh AND cached data.
+      // then de-duplicates and sorts (the "no admin" entry goes first).
+      // Applied to fresh AND cached data.
       function normalizeNames(raw) {
         let arr = raw.map(n => (n || '').trim()).filter(Boolean)
-                     .filter(n => !/^--.*--$/.test(n.trim()))
+                     .filter(n => isNoAdmin(n) || !/^--.*--$/.test(n))
                      .filter(n => !ADMIN_BLACKLIST.has(norm(n)));
         const seen = new Set();
         arr = arr.filter(n => { const k = norm(n); if (seen.has(k)) return false; seen.add(k); return true; });
-        arr.sort((a,b) => a.localeCompare(b,'en',{sensitivity:'base'}));
+        arr.sort((a,b) => (isNoAdmin(b) - isNoAdmin(a)) ||
+                          a.localeCompare(b,'en',{sensitivity:'base'}));
         return arr;
       }
 
@@ -2043,10 +2054,13 @@ function deactivateMenu() {
 
           const { sel, btn, win } = result;
 
-          // Step 2: find the option — exact match first, then unique prefix match
+          // Step 2: find the option — "no admin" first, then exact match,
+          //         then unique prefix match
           const wanted = norm(name);
-          const opts = [...sel.options].filter(o => o.value);
-          let opt = opts.find(o => norm(o.textContent) === wanted);
+          const all  = [...sel.options];
+          const opts = all.filter(o => o.value);
+          let opt = isNoAdmin(name) ? all.find(o => isNoAdmin(o.textContent)) : null;
+          if (!opt) opt = all.find(o => norm(o.textContent) === wanted);
           if (!opt) {
             const partial = opts.filter(o => norm(o.textContent).startsWith(wanted));
             if (partial.length === 1) opt = partial[0];
