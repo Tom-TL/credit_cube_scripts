@@ -2,7 +2,7 @@
 // @name         Processing Admin Quick Search
 // @author       Tom Harris
 // @namespace    https://github.com/Tom-TL/credit_cube_scripts
-// @version      3.3
+// @version      3.4
 // @description  Quick admin search field next to Processing Admin
 // @match        *://apply.creditcube.com/plm.net/*CustomerDetails.aspx*
 // @homepageURL  https://github.com/Tom-TL/credit_cube_scripts
@@ -206,9 +206,10 @@
                     .replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // The "no admin" entry of the LMS dropdown, e.g. "-- None --" or "No Admin".
+  // The "no admin" entry of the LMS dropdown: "-- Select Admin --".
+  // Picking it removes the Processing Admin. Typing "none" / "no admin" works too.
   // It must stay selectable even though other "-- ... --" lines are hidden.
-  const NO_ADMIN_RE = /^-*\s*(no admin|none|no one|nobody|not assigned|unassigned)\s*-*$/i;
+  const NO_ADMIN_RE = /^-*\s*(select admin|no admin|none|no one|nobody|not assigned|unassigned)\s*-*$/i;
   const isNoAdmin = n => NO_ADMIN_RE.test((n || '').trim());
 
   // Drops the blacklist, the "-- ... --" separators and empty entries,
